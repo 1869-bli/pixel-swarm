@@ -327,6 +327,14 @@ let state = S.TITLE;
 let highScore = 0;
 const MAX_ROUND = 8;
 
+const MENU_STATES = new Set([S.TITLE, S.MPMENU, S.CHARSELECT, S.LOBBY, S.UPGRADE, S.GAMEOVER, S.VICTORY]);
+function syncBgm() {
+  if (!bgmStarted) return;
+  const want = MENU_STATES.has(state) && bgmOn;
+  if (want && bgm.paused) bgm.play().catch(() => {});
+  else if (!want && !bgm.paused) bgm.pause();
+}
+
 // Networking / session
 const net = {
   mode: 'solo',        // 'solo' | 'host' | 'client'
@@ -1239,6 +1247,7 @@ function handleMenuKey(code) {
 let sinceSnap = 0, sinceInput = 0;
 function update(dt) {
   const isAuthority = net.mode !== 'client';
+  syncBgm();
 
   if (state === S.ROUNDINTRO && isAuthority && game) {
     game.introTimer -= dt;
