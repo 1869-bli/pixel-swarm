@@ -321,8 +321,35 @@ function localDir() {
 // ---------- App state ----------
 const S = {
   TITLE: 0, CHARSELECT: 1, MPMENU: 2, LOBBY: 3,
-  PLAYING: 4, UPGRADE: 5, ROUNDINTRO: 6, GAMEOVER: 7, VICTORY: 8
+  PLAYING: 4, UPGRADE: 5, ROUNDINTRO: 6, GAMEOVER: 7, VICTORY: 8, LEADERBOARD: 9
 };
+
+// ---------- Username + leaderboard (local) ----------
+const LS_NAME = 'pxswarm_name';
+const LS_LB = 'pxswarm_lb_infinite';
+let playerName = '';
+try { playerName = localStorage.getItem(LS_NAME) || ''; } catch (e) {}
+function ensureName() {
+  if (playerName) { net.name = playerName; return playerName; }
+  const d = 'PLAYER' + (1 + Math.floor(Math.random() * 99));
+  let n = null;
+  try { n = window.prompt('Enter your name for the leaderboard:', d); } catch (e) {}
+  playerName = (n && n.trim()) ? n.trim().slice(0, 10) : d;
+  try { localStorage.setItem(LS_NAME, playerName); } catch (e) {}
+  net.name = playerName;
+  return playerName;
+}
+function loadLB() {
+  try { const l = JSON.parse(localStorage.getItem(LS_LB)); return Array.isArray(l) ? l : []; }
+  catch (e) { return []; }
+}
+function saveLB(list) { try { localStorage.setItem(LS_LB, JSON.stringify(list)); } catch (e) {} }
+function recordScore(name, score, round) {
+  const lb = loadLB();
+  lb.push({ name: name || 'YOU', score: score | 0, round: round | 0, date: Date.now() });
+  lb.sort((a, b) => (b.score - a.score) || (b.round - a.round));
+  saveLB(lb.slice(0, 10));
+}
 let state = S.TITLE;
 let highScore = 0;
 const MAX_ROUND = 8;
@@ -352,7 +379,8 @@ const net = {
   snapPrev: null, snapCur: null, snapAt: 0, snapGap: 0.05,
   myUpgrades: null, picked: false,
   overInfo: null,
-  infinite: false
+  infinite: false,
+  name: ''
 };
 
 let game = null;       // authoritative sim (solo + host only)
@@ -573,6 +601,7 @@ function finishGame(g, won) {
   highScore = Math.max(highScore, g.score);
   net.overInfo = { won, score: g.score, kills: g.kills, round: g.round,
                    team: g.players.map(p => p.char), allies: g.allies.map(a => a.id) };
+  if (g.infinite) recordScore(net.name || playerName, g.score, g.round);
   state = won ? S.VICTORY : S.GAMEOVER;
   playEvent(won ? 'victory' : 'gameover');
   if (net.mode === 'host') hostBroadcast({ t: 'over', info: net.overInfo });
@@ -652,7 +681,7 @@ function startRound(g) {
   }
   state = S.ROUNDINTRO;
   if (!g.infinite && g.round === MAX_ROUND) spawnBoss(g);
-  if (net.mode === 'host') hostBroadcast({ t: 'round', n: g.round });
+  if (net.mode === 'host') hostBroadcast({ t: 'round', n: g.round, infinite: g.infinite });
 }
 
 function endRound(g) {
@@ -944,7 +973,7 @@ function makeSnapshot(g) {
     t: 'state',
     st: state,
     round: g.round,
-    left: g.round < MAX_ROUND ? Math.max(0, Math.ceil(g.roundLen - g.roundTime)) : -1,
+    left: (!g.infinite && g.round >= MAX_ROUND) ? -1 : Math.max(0, Math.ceil(g.roundLen - g.roundTime)),
     score: g.score,
     shake: R1(g.shake),
     intro: state === S.ROUNDINTRO ? R1(g.introTimer) : 0,
@@ -1040,16 +1069,18 @@ function hostOnData(conn, msg) {
 }
 
 function hostStartGame() {
+  ensureName();
   const defs = net.lobby.filter(l => l.char).map(l => ({ pid: l.pid, char: l.char }));
   if (!defs.some(d => d.pid === 0)) return; // host must pick
   game = newGame(defs);
-  game.infinite = net.infinite && false; // infinite is solo-only for now
-  hostBroadcast({ t: 'start', players: defs });
+  game.infinite = net.infinite;
+  hostBroadcast({ t: 'start', players: defs, infinite: net.infinite });
   startRound(game);
 }
 
 function startJoin() {
   if (typeof Peer === 'undefined') { net.err = 'multiplayer lib failed to load — check connection'; return; }
+  ensureName();
   const code = (window.prompt('Enter 4-letter room code:') || '').trim().toUpperCase();
   if (!/^[A-Z]{4}$/.test(code)) { net.err = code ? 'codes are 4 letters' : ''; return; }
   net.mode = 'client';
@@ -1081,14 +1112,16 @@ function clientOnData(msg) {
   if (msg.t === 'welcome') { net.myId = msg.pid; }
   else if (msg.t === 'lobby') { net.lobby = msg.lobby; }
   else if (msg.t === 'start') {
+    net.infinite = !!msg.infinite;
     net.snapPrev = null; net.snapCur = null;
     state = S.ROUNDINTRO;
   }
-  else if (msg.t === 'round') { net.picked = false; net.myUpgrades = null; state = S.ROUNDINTRO; }
+  else if (msg.t === 'round') { net.picked = false; net.myUpgrades = null; state = S.ROUNDINTRO; if (typeof msg.infinite === 'boolean') net.infinite = msg.infinite; }
   else if (msg.t === 'upgrade') { net.myUpgrades = msg.choices; net.picked = false; state = S.UPGRADE; playEvent('clear'); }
   else if (msg.t === 'waiting') { /* others still picking */ }
   else if (msg.t === 'over') {
     net.overInfo = msg.info;
+    if (net.infinite) recordScore(net.name || playerName, msg.info.score, msg.info.round);
     state = msg.info.won ? S.VICTORY : S.GAMEOVER;
     playEvent(msg.info.won ? 'victory' : 'gameover');
   }
@@ -1118,9 +1151,10 @@ function resetToTitle() {
 // ---------- Menus: layout + hit testing ----------
 function titleButtons() {
   return [
-    { label: 'SOLO', x: VW/2 - 130, y: 182, w: 120, h: 26 },
-    { label: 'MULTIPLAYER', x: VW/2 + 10, y: 182, w: 120, h: 26 },
-    { label: 'INFINITE', x: VW/2 - 70, y: 212, w: 140, h: 26 }
+    { label: 'SOLO', x: VW/2 - 130, y: 178, w: 120, h: 26 },
+    { label: 'MULTIPLAYER', x: VW/2 + 10, y: 178, w: 120, h: 26 },
+    { label: 'INFINITE', x: VW/2 - 130, y: 208, w: 120, h: 26 },
+    { label: 'LEADERBOARD', x: VW/2 + 10, y: 208, w: 120, h: 26 }
   ];
 }
 function mpButtons() {
@@ -1144,6 +1178,7 @@ function charCells() {
   return cells;
 }
 function lobbyStartButton() { return { label: 'START GAME', x: VW/2 - 60, y: 236, w: 120, h: 24 }; }
+function lobbyInfiniteButton() { return { label: '∞ ' + (net.infinite ? 'INFINITE' : 'NORMAL'), x: VW/2 - 190, y: 236, w: 120, h: 24 }; }
 const CARD = { w: 130, h: 120, gap: 14, y: 80 };
 function cardRect(i) {
   const total = CARD.w * 3 + CARD.gap * 2;
@@ -1154,6 +1189,7 @@ function inRect(x, y, r) { return x >= r.x && x <= r.x + r.w && y >= r.y && y <=
 
 function chooseChar(id) {
   if (state === S.CHARSELECT) {
+    ensureName();
     net.myChar = id;
     game = newGame([{ pid: 0, char: id }]);
     net.myId = 0;
@@ -1186,11 +1222,13 @@ function pickUpgrade(idx) {
 }
 
 function handleTap(x, y) {
+  if (state === S.LEADERBOARD) { resetToTitle(); return; }
   if (state === S.TITLE) {
     const b = titleButtons();
     if (inRect(x, y, b[0])) { net.infinite = false; state = S.CHARSELECT; net.selIdx = 0; }
     else if (inRect(x, y, b[1])) { net.infinite = false; state = S.MPMENU; net.err = ''; }
     else if (inRect(x, y, b[2])) { net.infinite = true; state = S.CHARSELECT; net.selIdx = 0; }
+    else if (inRect(x, y, b[3])) { state = S.LEADERBOARD; }
   } else if (state === S.MPMENU) {
     const b = mpButtons();
     if (inRect(x, y, b[0])) { net.infinite = false; startHost(); }
@@ -1200,7 +1238,10 @@ function handleTap(x, y) {
     for (const c of charCells()) {
       if (inRect(x, y, c)) { chooseChar(c.id); return; }
     }
-    if (state === S.LOBBY && net.mode === 'host' && inRect(x, y, lobbyStartButton())) hostStartGame();
+    if (state === S.LOBBY && net.mode === 'host') {
+      if (inRect(x, y, lobbyInfiniteButton())) { net.infinite = !net.infinite; return; }
+      if (inRect(x, y, lobbyStartButton())) hostStartGame();
+    }
   } else if (state === S.UPGRADE) {
     for (let i = 0; i < 3; i++) {
       if (inRect(x, y, cardRect(i))) { pickUpgrade(i); return; }
@@ -1212,10 +1253,15 @@ function handleTap(x, y) {
 
 function handleMenuKey(code) {
   if (code === 'KeyN') { toggleBgm(); return; }
+  if (state === S.LEADERBOARD) {
+    if (code === 'Enter' || code === 'Escape' || code === 'Space') resetToTitle();
+    return;
+  }
   if (state === S.TITLE) {
     if (code === 'Digit1' || code === 'Enter' || code === 'Space') { net.infinite = false; state = S.CHARSELECT; net.selIdx = 0; }
     else if (code === 'Digit2' || code === 'KeyM') { net.infinite = false; state = S.MPMENU; net.err = ''; }
     else if (code === 'Digit3' || code === 'KeyI') { net.infinite = true; state = S.CHARSELECT; net.selIdx = 0; }
+    else if (code === 'Digit4' || code === 'KeyL') { state = S.LEADERBOARD; }
   } else if (state === S.MPMENU) {
     if (code === 'Digit1' || code === 'KeyH') startHost();
     else if (code === 'Digit2' || code === 'KeyJ') startJoin();
@@ -1231,6 +1277,7 @@ function handleMenuKey(code) {
       if (state === S.LOBBY && net.mode === 'host' && code === 'Enter' && net.myChar) { /* enter picks; S starts */ }
     }
     else if (code === 'KeyG' && state === S.LOBBY && net.mode === 'host') hostStartGame();
+    else if (code === 'KeyI' && state === S.LOBBY && net.mode === 'host') net.infinite = !net.infinite;
     else if (code === 'Escape') resetToTitle();
   } else if (state === S.UPGRADE) {
     let idx = -1;
@@ -1473,7 +1520,7 @@ function drawHUD() {
   heartRow(h.hp, h.mhp, 6, 6);
   text('SCORE ' + h.score, VW - 6, 5, PAL.white, 1, 'right');
   if (h.left >= 0) {
-    const inf = (game && game.infinite) ? ' ∞' : '';
+    const inf = net.infinite ? ' ∞' : '';
     text('ROUND ' + h.round + inf + '  ' + h.left + 's', VW/2, 5, PAL.grey, 1, 'center');
   } else {
     text('ROUND ' + h.round + '  BOSS', VW/2, 5, PAL.purple, 1, 'center');
@@ -1498,11 +1545,33 @@ function render() {
     }
     text(IS_TOUCH ? 'drag to move — guns fire themselves' : 'WASD / arrows to move — guns fire themselves', VW/2, 125, PAL.white, 1, 'center');
     text('team up online: host a room, share the 4-letter code', VW/2, 137, PAL.white, 1, 'center');
-    if (highScore > 0) text('HIGH SCORE ' + highScore, VW/2, 160, PAL.cyan, 1, 'center');
+    if (highScore > 0) text('HIGH SCORE ' + highScore, VW/2, 158, PAL.cyan, 1, 'center');
     const bts = titleButtons();
-    drawButton(bts[0]); drawButton(bts[1]); drawButton(bts[2], net.infinite);
-    if (!IS_TOUCH) text('[1] solo   [2] multiplayer   [3] infinite   [N] ' + (bgmOn ? 'mute' : 'unmute'), VW/2, 246, PAL.grey, 1, 'center');
-    if (net.err) text(net.err, VW/2, 260, PAL.red, 1, 'center');
+    drawButton(bts[0]); drawButton(bts[1]); drawButton(bts[2], net.infinite); drawButton(bts[3], false);
+    text('PLAYING AS: ' + (playerName || '?'), VW/2, 236, PAL.teal, 1, 'center');
+    if (!IS_TOUCH) text('[1] solo  [2] mp  [3] infinite  [4] board   [N] mute', VW/2, 250, PAL.grey, 1, 'center');
+    if (net.err) text(net.err, VW/2, 263, PAL.red, 1, 'center');
+    return;
+  }
+
+  if (state === S.LEADERBOARD) {
+    text('INFINITE LEADERBOARD', VW/2, 22, PAL.yellow, 2, 'center');
+    text('top scores — points, then rounds reached', VW/2, 48, PAL.grey, 1, 'center');
+    const lb = loadLB();
+    if (lb.length === 0) {
+      text('no runs yet — play infinite mode!', VW/2, 130, PAL.white, 1, 'center');
+    } else {
+      for (let i = 0; i < lb.length; i++) {
+        const e = lb[i];
+        const y = 78 + i * 16;
+        const c = i === 0 ? PAL.yellow : PAL.white;
+        text((i + 1) + '.', VW/2 - 205, y, c, 1, 'left');
+        text(e.name, VW/2 - 180, y, c, 1, 'left');
+        text(e.score + ' pts', VW/2 + 70, y, i === 0 ? PAL.yellow : PAL.green, 1, 'right');
+        text('round ' + e.round, VW/2 + 205, y, i === 0 ? PAL.yellow : PAL.cyan, 1, 'right');
+      }
+    }
+    text(IS_TOUCH ? 'TAP TO GO BACK' : 'ENTER / ESC TO GO BACK', VW/2, 250, PAL.green, 1.5, 'center');
     return;
   }
 
@@ -1550,8 +1619,9 @@ function render() {
       const ready = net.lobby.filter(l => l.char).length;
       text(ready + '/' + net.lobby.length + ' picked', VW/2, 222, PAL.grey, 1, 'center');
       if (net.mode === 'host') {
+        drawButton(lobbyInfiniteButton(), net.infinite);
         drawButton(lobbyStartButton(), net.myChar);
-        if (!IS_TOUCH) text('[G] start when ready', VW/2 + 130, 242, PAL.grey, 1, 'left');
+        if (!IS_TOUCH) text('[I] infinite  [G] start', VW/2 + 130, 242, PAL.grey, 1, 'left');
       } else {
         text('waiting for host to start...', VW/2, 240, PAL.grey, 1, 'center');
       }
@@ -1643,6 +1713,7 @@ function render() {
     }
     text('score ' + info.score + '   kills ' + info.kills, VW/2, 142, PAL.white, 1, 'center');
     if (info.score >= highScore && info.score > 0) text('HIGH SCORE!', VW/2, 156, PAL.yellow, 1, 'center');
+    if (net.infinite) text('reached round ' + info.round + ' — see the leaderboard!', VW/2, 168, PAL.teal, 1, 'center');
     text(IS_TOUCH ? 'TAP TO CONTINUE' : 'PRESS ENTER', VW/2, 180, PAL.green, 1.5, 'center');
   }
 }
