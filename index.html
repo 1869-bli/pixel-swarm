@@ -1,0 +1,1620 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>PIXEL SWARM — Finn &amp; Family</title>
+<style>
+  html, body {
+    margin: 0; padding: 0; height: 100%;
+    background: #0b0e16;
+    overflow: hidden;
+    display: flex; align-items: center; justify-content: center;
+  }
+  canvas {
+    image-rendering: pixelated;
+    image-rendering: crisp-edges;
+    background: #10141f;
+    touch-action: none;
+  }
+  body { touch-action: none; -webkit-user-select: none; user-select: none; }
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/peerjs/1.5.4/peerjs.min.js"></script>
+<script>
+(() => {
+'use strict';
+
+// ---------- Setup ----------
+const VW = 480, VH = 270;
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+canvas.width = VW; canvas.height = VH;
+ctx.imageSmoothingEnabled = false;
+
+function fit() {
+  let scale = Math.min(window.innerWidth / VW, window.innerHeight / VH);
+  if (scale >= 1) scale = Math.floor(scale);
+  canvas.style.width = (VW * scale) + 'px';
+  canvas.style.height = (VH * scale) + 'px';
+}
+window.addEventListener('resize', fit); fit();
+
+// ---------- Palette ----------
+const PAL = {
+  bg: '#10141f', grid: '#161b2a', wall: '#2a3350',
+  white: '#f4f4f8', yellow: '#ffd93b', orange: '#ff8f3b',
+  red: '#ff4b5c', pink: '#ff7ac5', cyan: '#4bd3ff',
+  green: '#5dff6e', dgreen: '#2b9e4a', blue: '#5b8cff',
+  purple: '#b06bff', grey: '#8a93b0', dark: '#0b0e16',
+  skin: '#ffd9b3', skin2: '#c68642',
+  blond: '#ffe27a', brown: '#8a5a2b', ginger: '#ff7f2a',
+  strawb: '#ffb98a', dbrown: '#4a2f1d', black: '#26262e', teal: '#2ec4b6'
+};
+
+// ---------- Pixel sprites ----------
+const LEG = { w:'white', y:'yellow', o:'orange', r:'red', p:'pink', c:'cyan',
+              g:'green', G:'dgreen', b:'blue', u:'purple', e:'grey', d:'dark',
+              s:'skin', k:'skin2', F:'blond', L:'brown', T:'ginger', H:'strawb',
+              M:'dbrown', K:'black', Z:'teal' };
+
+function makeSprite(rows) {
+  const h = rows.length, w = rows[0].length;
+  const c = document.createElement('canvas');
+  c.width = w; c.height = h;
+  const x = c.getContext('2d');
+  for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) {
+    const ch = rows[j][i];
+    if (ch === '.') continue;
+    x.fillStyle = PAL[LEG[ch]];
+    x.fillRect(i, j, 1, 1);
+  }
+  return c;
+}
+
+function personSprite(hair, shirt, skin) {
+  const h = hair, b = shirt, s = skin || 's';
+  return makeSprite([
+    '..'+h+h+h+h+h+h+'..',
+    '.'+h+h+h+h+h+h+h+h+'.',
+    '.'+h+s+s+s+s+s+s+h+'.',
+    '..'+s+'d'+s+s+'d'+s+s+s,
+    '..'+s+s+s+s+s+s+'..',
+    '..'+b+b+b+b+b+b+'..',
+    '.'+b+b+b+b+b+b+b+b+'.',
+    '.'+s+b+b+b+b+b+b+s+'.',
+    '..'+b+'..'+b+'...',
+    '..d....d..'
+  ].map(r => (r + '..........').slice(0, 10)));
+}
+
+function smallPersonSprite(hair, shirt, skin) {
+  const h = hair, b = shirt, s = skin || 's';
+  return makeSprite([
+    '.'+h+h+h+h+h+h+'.',
+    h+h+h+h+h+h+h+h,
+    h+s+'d'+s+s+'d'+s+h,
+    '.'+s+s+s+s+s+s+'.',
+    '.'+b+b+b+b+b+b+'.',
+    s+b+b+b+b+b+b+s,
+    '.'+b+'....'+b+'.',
+    '.d.....d'
+  ].map(r => (r + '........').slice(0, 8)));
+}
+
+const SPR = {
+  finn:   personSprite('F', 'b'),
+  libby:  personSprite('L', 'p'),
+  thom:   personSprite('T', 'g'),
+  hannah: personSprite('H', 'c'),
+  mum:    personSprite('M', 'u'),
+  winnie: smallPersonSprite('K', 'y', 'k'),
+  jono:   personSprite('K', 'Z', 'k'),
+  chaser: makeSprite([
+    '..pppp..','.pprrpp.','pprddrpp','pprddrpp','pppppppp','.prpprp.','..p..p..','.p....p.'
+  ]),
+  shooter: makeSprite([
+    '...cc...','..cwwc..','.cwddwc.','ccwddwcc','.cccccc.','..c..c..','.c....c.','c......c'
+  ]),
+  tank: makeSprite([
+    '..gggggggg..','.gGGGGGGGGg.','gGGddGGddGGg','gGGddGGddGGg','gGGGGGGGGGGg','gGGgGGGGgGGg',
+    'gGGGggggGGGg','.gGGGGGGGGg.','..gggggggg..','..g.g..g.g..'
+  ]),
+  boss: makeSprite([
+    '....uuuuuuuu....','..uuppppppppuu..','.uupprrrrrrppuu.','.upprddrrddrppu.','uupprddrrddrppuu',
+    'uuppprrrrrrpppuu','uupppppppppppuuu','uuppyppppppyppuu','.uppppyyyyppppu.','.uupppppppppuu..',
+    '..uu.uu..uu.uu..','..u...u..u...u..'
+  ])
+};
+
+// ---------- Character roster ----------
+// Every character has a fighting style. Your character fires this style and
+// upgrades stack on top. In solo, un-picked characters can join as AI allies.
+const CHAR_IDS = ['finn','libby','winnie','thom','hannah','mum','jono'];
+const FAMILY = {
+  finn:   { name: 'FINN',          sprite: 'finn',   fireRate: 2.4, dmgMul: 1.0,  bSpeed: 170, pierce: 0, spread: 1, homing: false, aoe: false, col: PAL.yellow,
+            flavour: 'steady blaster' },
+  libby:  { name: 'LIBBY',         sprite: 'libby',  fireRate: 3.4, dmgMul: 0.6,  bSpeed: 190, pierce: 0, spread: 1, homing: false, aoe: false, col: PAL.pink,
+            flavour: 'quick pea-shooter' },
+  winnie: { name: 'WINNIE',        sprite: 'winnie', fireRate: 2.0, dmgMul: 0.45, bSpeed: 165, pierce: 0, spread: 3, homing: false, aoe: false, col: PAL.yellow,
+            flavour: 'tiny triple spray' },
+  thom:   { name: 'UNCLE THOM',    sprite: 'thom',   fireRate: 0.9, dmgMul: 2.6,  bSpeed: 150, pierce: 1, spread: 1, homing: false, aoe: false, col: PAL.ginger,
+            flavour: 'slow, heavy shots' },
+  hannah: { name: 'AUNTIE HANNAH', sprite: 'hannah', fireRate: 1.7, dmgMul: 1.0,  bSpeed: 175, pierce: 2, spread: 1, homing: false, aoe: false, col: PAL.strawb,
+            flavour: 'piercing shots' },
+  mum:    { name: 'MUM',           sprite: 'mum',    fireRate: 1.4, dmgMul: 1.1,  bSpeed: 130, pierce: 0, spread: 1, homing: true,  aoe: false, col: PAL.purple,
+            flavour: 'homing shots' },
+  jono:   { name: 'JONO',          sprite: 'jono',   fireRate: 1.1, dmgMul: 1.4,  bSpeed: 145, pierce: 0, spread: 1, homing: false, aoe: true,  col: PAL.teal,
+            flavour: 'explosive shots' }
+};
+
+// ---------- Sound ----------
+let AC = null;
+function audio() {
+  if (!AC) {
+    try { AC = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { return null; }
+  }
+  if (AC && AC.state === 'suspended') AC.resume();
+  return AC;
+}
+function tone(freq, dur, type, vol, slideTo, delay) {
+  type = type || 'square'; vol = vol === undefined ? 0.12 : vol; delay = delay || 0;
+  const a = audio(); if (!a) return;
+  const t0 = a.currentTime + delay;
+  const osc = a.createOscillator();
+  const g = a.createGain();
+  osc.type = type;
+  osc.frequency.setValueAtTime(freq, t0);
+  if (slideTo) osc.frequency.exponentialRampToValueAtTime(Math.max(30, slideTo), t0 + dur);
+  g.gain.setValueAtTime(vol, t0);
+  g.gain.exponentialRampToValueAtTime(0.001, t0 + dur);
+  osc.connect(g); g.connect(a.destination);
+  osc.start(t0); osc.stop(t0 + dur + 0.02);
+}
+function noiseS(dur, vol, delay) {
+  vol = vol === undefined ? 0.15 : vol; delay = delay || 0;
+  const a = audio(); if (!a) return;
+  const t0 = a.currentTime + delay;
+  const len = Math.max(1, Math.floor(a.sampleRate * dur));
+  const buf = a.createBuffer(1, len, a.sampleRate);
+  const data = buf.getChannelData(0);
+  for (let i = 0; i < len; i++) data[i] = (Math.random()*2-1) * (1 - i/len);
+  const src = a.createBufferSource(); src.buffer = buf;
+  const g = a.createGain();
+  g.gain.setValueAtTime(vol, t0);
+  g.gain.exponentialRampToValueAtTime(0.001, t0 + dur);
+  src.connect(g); g.connect(a.destination);
+  src.start(t0);
+}
+let lastShotSfx = 0;
+const SFX = {
+  shoot() {
+    const now = performance.now();
+    if (now - lastShotSfx < 70) return;
+    lastShotSfx = now;
+    tone(620, 0.06, 'square', 0.05, 240);
+  },
+  hit()      { tone(200, 0.05, 'square', 0.07, 140); },
+  kill()     { tone(300, 0.12, 'square', 0.1, 60); noiseS(0.06, 0.08); },
+  bigkill()  { tone(160, 0.25, 'sawtooth', 0.14, 40); noiseS(0.18, 0.16); },
+  hurt()     { tone(140, 0.22, 'sawtooth', 0.18, 60); noiseS(0.1, 0.12); },
+  upgrade()  { [440, 554, 659, 880].forEach((f, i) => tone(f, 0.1, 'square', 0.1, null, i * 0.07)); },
+  join()     { [392, 494, 587, 784, 988].forEach((f, i) => tone(f, 0.12, 'triangle', 0.12, null, i * 0.08)); },
+  revive()   { [523, 659, 784, 1047].forEach((f, i) => tone(f, 0.14, 'triangle', 0.14, null, i * 0.09)); },
+  clear()    { tone(523, 0.12, 'square', 0.1); tone(784, 0.18, 'square', 0.1, null, 0.12); },
+  boss()     { tone(80, 0.5, 'sawtooth', 0.16, 40); },
+  burst()    { tone(110, 0.15, 'square', 0.1, 70); },
+  gameover() { [330, 262, 220, 165].forEach((f, i) => tone(f, 0.25, 'sawtooth', 0.12, null, i * 0.18)); },
+  victory()  { [523, 659, 784, 1047, 784, 1047].forEach((f, i) => tone(f, 0.16, 'square', 0.11, null, i * 0.12)); }
+};
+function playEvent(ev) { if (SFX[ev]) SFX[ev](); }
+
+// ---------- Input ----------
+const keys = {};
+window.addEventListener('keydown', e => {
+  keys[e.code] = true;
+  if (['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Space'].includes(e.code)) e.preventDefault();
+  audio();
+  handleMenuKey(e.code);
+});
+window.addEventListener('keyup', e => { keys[e.code] = false; });
+
+const IS_TOUCH = ('ontouchstart' in window) || navigator.maxTouchPoints > 0;
+const touch = { active: false, ox: 0, oy: 0, x: 0, y: 0, dirX: 0, dirY: 0 };
+
+function toCanvas(clientX, clientY) {
+  const r = canvas.getBoundingClientRect();
+  return { x: (clientX - r.left) * (VW / r.width), y: (clientY - r.top) * (VH / r.height) };
+}
+
+canvas.addEventListener('touchstart', e => {
+  e.preventDefault();
+  audio();
+  const t = e.changedTouches[0];
+  const c = toCanvas(t.clientX, t.clientY);
+  if (state === S.PLAYING || state === S.ROUNDINTRO) {
+    touch.active = true;
+    touch.ox = c.x; touch.oy = c.y;
+    touch.x = c.x; touch.y = c.y;
+    touch.dirX = 0; touch.dirY = 0;
+  } else {
+    handleTap(c.x, c.y);
+  }
+}, { passive: false });
+
+canvas.addEventListener('touchmove', e => {
+  e.preventDefault();
+  if (!touch.active) return;
+  const t = e.changedTouches[0];
+  const c = toCanvas(t.clientX, t.clientY);
+  touch.x = c.x; touch.y = c.y;
+  let dx = c.x - touch.ox, dy = c.y - touch.oy;
+  const d = Math.hypot(dx, dy);
+  const dead = 5, max = 26;
+  if (d < dead) { touch.dirX = 0; touch.dirY = 0; return; }
+  if (d > max) {
+    touch.ox = c.x - (dx / d) * max;
+    touch.oy = c.y - (dy / d) * max;
+  }
+  touch.dirX = dx / Math.max(d, max) * Math.min(1, d / max);
+  touch.dirY = dy / Math.max(d, max) * Math.min(1, d / max);
+  const m = Math.hypot(touch.dirX, touch.dirY);
+  if (m > 1) { touch.dirX /= m; touch.dirY /= m; }
+}, { passive: false });
+
+function endTouch(e) {
+  e.preventDefault();
+  touch.active = false;
+  touch.dirX = 0; touch.dirY = 0;
+}
+canvas.addEventListener('touchend', endTouch, { passive: false });
+canvas.addEventListener('touchcancel', endTouch, { passive: false });
+
+// Mouse clicks work as taps in menus too (handy on desktop)
+canvas.addEventListener('mousedown', e => {
+  audio();
+  if (state === S.PLAYING || state === S.ROUNDINTRO) return;
+  const c = toCanvas(e.clientX, e.clientY);
+  handleTap(c.x, c.y);
+});
+
+function localDir() {
+  let mx = 0, my = 0;
+  if (keys['KeyW'] || keys['ArrowUp']) my -= 1;
+  if (keys['KeyS'] || keys['ArrowDown']) my += 1;
+  if (keys['KeyA'] || keys['ArrowLeft']) mx -= 1;
+  if (keys['KeyD'] || keys['ArrowRight']) mx += 1;
+  if (mx || my) {
+    const m = Math.hypot(mx, my);
+    return { x: mx / m, y: my / m };
+  }
+  if (touch.active && (touch.dirX || touch.dirY)) return { x: touch.dirX, y: touch.dirY };
+  return { x: 0, y: 0 };
+}
+
+// ---------- App state ----------
+const S = {
+  TITLE: 0, CHARSELECT: 1, MPMENU: 2, LOBBY: 3,
+  PLAYING: 4, UPGRADE: 5, ROUNDINTRO: 6, GAMEOVER: 7, VICTORY: 8
+};
+let state = S.TITLE;
+let highScore = 0;
+const MAX_ROUND = 8;
+
+// Networking / session
+const net = {
+  mode: 'solo',        // 'solo' | 'host' | 'client'
+  peer: null,
+  conns: [],           // host: open connections
+  hostConn: null,      // client: connection to host
+  code: '',
+  err: '',
+  myId: 0,             // player id (0 = host / solo)
+  nextPid: 1,
+  lobby: [],           // [{pid, char}]
+  myChar: null,
+  selIdx: 0,           // cursor in char select
+  lastInputSent: 0,
+  snapPrev: null, snapCur: null, snapAt: 0, snapGap: 0.05,
+  myUpgrades: null, picked: false,
+  overInfo: null
+};
+
+let game = null;       // authoritative sim (solo + host only)
+
+// ---------- Sim ----------
+const rnd = (a, b) => a + Math.random() * (b - a);
+const dist2 = (a, b) => { const dx=a.x-b.x, dy=a.y-b.y; return dx*dx+dy*dy; };
+
+function makePlayer(pid, charId, idx, count) {
+  const f = FAMILY[charId];
+  return {
+    pid, char: charId,
+    x: VW/2 + (idx - (count-1)/2) * 24, y: VH/2, r: 4,
+    hp: 6, maxHp: 6, down: false,
+    speed: 78,
+    fireRate: f.fireRate, fireCd: rnd(0, 0.3),
+    damage: f.dmgMul,
+    shots: f.spread,
+    pierce: f.pierce,
+    bulletSpeed: f.bSpeed,
+    homing: f.homing, aoe: f.aoe,
+    orbs: 0, orbAngle: 0,
+    explode: false, rear: false,
+    invuln: 0, sinceHurt: 99, regenT: 0,
+    dir: {x: 0, y: 0}, lastDir: {x: 1, y: 0}
+  };
+}
+
+function newGame(playerDefs) {
+  const players = playerDefs.map((d, i) => makePlayer(d.pid, d.char, i, playerDefs.length));
+  return {
+    mp: playerDefs.length > 1,
+    round: 1, score: 0, kills: 0,
+    roundTime: 0, roundLen: 35,
+    spawnTimer: 0, introTimer: 0, shake: 0,
+    nextEid: 1,
+    players,
+    trail: [], allies: [],
+    enemies: [], bullets: [], ebullets: [],
+    pickups: [],
+    particles: [], texts: [],
+    boss: null,
+    upgradeChoices: {},   // pid -> [cards]
+    pendingPicks: new Set(),
+    events: []
+  };
+}
+
+function emitEvent(g, name) { g.events.push(name); }
+
+// ---------- Upgrades ----------
+const UPGRADES = [
+  { id:'rapid',  name:'RAPID FIRE',   desc:'+25% fire rate',      apply: p => p.fireRate *= 1.25 },
+  { id:'heavy',  name:'HEAVY ROUNDS', desc:'+35% damage',         apply: p => p.damage *= 1.35 },
+  { id:'split',  name:'SPLIT SHOT',   desc:'+1 projectile',       apply: p => p.shots += 1 },
+  { id:'pierce', name:'PIERCING',     desc:'shots hit +1 enemy',  apply: p => p.pierce += 1 },
+  { id:'boots',  name:'SWIFT BOOTS',  desc:'+15% move speed',     apply: p => p.speed *= 1.15 },
+  { id:'velo',   name:'VELOCITY',     desc:'+30% shot speed',     apply: p => p.bulletSpeed *= 1.3 },
+  { id:'vital',  name:'VITALITY',     desc:'+2 max HP, heal 2',   apply: p => { p.maxHp += 2; p.hp = Math.min(p.maxHp, p.hp + 2); } },
+  { id:'orb',    name:'ORBIT SHIELD', desc:'+1 orbiting orb',     apply: p => p.orbs += 1 },
+  { id:'blast',  name:'BLAST CAPS',   desc:'kills explode',       apply: p => p.explode = true, once: p => p.explode },
+  { id:'rear',   name:'REAR GUARD',   desc:'also fire backwards', apply: p => p.rear = true, once: p => p.rear }
+];
+const UPGRADE_BY_ID = {};
+UPGRADES.forEach(u => UPGRADE_BY_ID[u.id] = u);
+
+function rollStatUpgrades(pl) {
+  const pool = UPGRADES.filter(u => !(u.once && u.once(pl)));
+  const picks = [];
+  const copy = pool.slice();
+  while (picks.length < 3 && copy.length) {
+    picks.push(copy.splice(Math.floor(Math.random()*copy.length), 1)[0]);
+  }
+  return picks.map(u => ({ id: u.id, name: u.name, desc: u.desc }));
+}
+
+function rollSoloUpgrades(g) {
+  const p = g.players[0];
+  const stat = rollStatUpgrades(p);
+  const famPool = CHAR_IDS.filter(id => id !== p.char && !g.allies.some(a => a.id === id));
+  const picks = [];
+  if (famPool.length) {
+    const id = famPool[Math.floor(Math.random()*famPool.length)];
+    picks.push({ id: 'fam_' + id, name: FAMILY[id].name + ' JOINS!', desc: FAMILY[id].flavour, family: id });
+  }
+  for (const s of stat) { if (picks.length < 3) picks.push(s); }
+  for (let i = picks.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [picks[i], picks[j]] = [picks[j], picks[i]];
+  }
+  return picks;
+}
+
+function applyUpgrade(g, pid, card) {
+  const pl = g.players.find(p => p.pid === pid);
+  if (!pl) return;
+  if (card.family) {
+    g.allies.push({ id: card.family, fireCd: rnd(0.2, 0.8), x: pl.x, y: pl.y });
+    emitEvent(g, 'join');
+  } else {
+    const u = UPGRADE_BY_ID[card.id];
+    if (u) u.apply(pl);
+    emitEvent(g, 'upgrade');
+  }
+}
+
+// ---------- Effects ----------
+function addText(g, x, y, str, col, life) {
+  life = life || 0.8;
+  g.texts.push({x, y, str, col, life, max: life});
+}
+function burst(g, x, y, col, n, spd) {
+  n = n || 8; spd = spd || 60;
+  for (let i=0;i<n;i++) {
+    const a = Math.random()*Math.PI*2, s = rnd(spd*0.3, spd);
+    g.particles.push({x, y, vx: Math.cos(a)*s, vy: Math.sin(a)*s, life: rnd(0.2,0.5), col});
+  }
+}
+
+// ---------- Spawning ----------
+function edgeSpawn() {
+  const side = Math.floor(Math.random()*4);
+  if (side===0) return {x: rnd(10, VW-10), y: -8};
+  if (side===1) return {x: rnd(10, VW-10), y: VH+8};
+  if (side===2) return {x: -8, y: rnd(10, VH-10)};
+  return {x: VW+8, y: rnd(10, VH-10)};
+}
+
+function alivePlayers(g) { return g.players.filter(p => !p.down); }
+function nearestPlayer(g, x, y) {
+  let best = null, bd = Infinity;
+  for (const p of alivePlayers(g)) {
+    const d = (p.x-x)*(p.x-x) + (p.y-y)*(p.y-y);
+    if (d < bd) { bd = d; best = p; }
+  }
+  return best;
+}
+
+function spawnEnemy(g) {
+  const r = g.round;
+  const pos = edgeSpawn();
+  const roll = Math.random();
+  let type;
+  if (r <= 2) type = 'chaser';
+  else if (r <= 4) type = roll < 0.8 ? 'chaser' : 'shooter';
+  else type = roll < 0.6 ? 'chaser' : (roll < 0.85 ? 'shooter' : 'tank');
+
+  const crew = g.players.length + g.allies.length;
+  const hpScale = (1 + (r-1) * 0.26) * (1 + (crew - 1) * 0.14);
+  const eid = g.nextEid++;
+  if (type === 'chaser') {
+    g.enemies.push({eid, type, x:pos.x, y:pos.y, r:4, hp: 2*hpScale, maxHp: 2*hpScale,
+      speed: rnd(38, 50) + r*1.5, flash: 0});
+  } else if (type === 'shooter') {
+    g.enemies.push({eid, type, x:pos.x, y:pos.y, r:4, hp: 3*hpScale, maxHp: 3*hpScale,
+      speed: 30 + r, fireCd: rnd(1.4, 2.4), flash: 0});
+  } else {
+    g.enemies.push({eid, type, x:pos.x, y:pos.y, r:6, hp: 10*hpScale, maxHp: 10*hpScale,
+      speed: 16 + r, flash: 0});
+  }
+}
+
+function spawnBoss(g) {
+  const crew = g.players.length + g.allies.length;
+  const hp = 150 + (crew - 1) * 45;
+  g.boss = { eid: g.nextEid++, type:'boss', x: VW/2, y: 40, r: 9,
+    hp, maxHp: hp, speed: 24,
+    fireCd: 1.5, burstCd: 3.5, spawnCd: 5, flash: 0, t: 0 };
+  g.enemies.push(g.boss);
+  emitEvent(g, 'boss');
+}
+
+// ---------- Damage ----------
+function damageEnemy(g, e, dmg, srcPl, fromExplosion) {
+  e.hp -= dmg;
+  e.flash = 0.08;
+  if (e.hp <= 0 && !e.dead) {
+    e.dead = true;
+    g.kills++;
+    g.score += e.type === 'boss' ? 500 : (e.type === 'tank' ? 40 : e.type === 'shooter' ? 25 : 10);
+    burst(g, e.x, e.y, e.type==='boss' ? PAL.purple : e.type==='tank' ? PAL.green : e.type==='shooter' ? PAL.cyan : PAL.pink, 10, 80);
+    g.shake = Math.max(g.shake, e.type==='boss' ? 0.5 : 0.12);
+    emitEvent(g, (e.type === 'boss' || e.type === 'tank') ? 'bigkill' : 'kill');
+    if (srcPl && srcPl.explode && !fromExplosion && e.type !== 'boss') {
+      const R = 26;
+      burst(g, e.x, e.y, PAL.orange, 14, 110);
+      for (const o of g.enemies) {
+        if (o !== e && !o.dead && dist2(o, e) < R*R) damageEnemy(g, o, srcPl.damage * 1.2, srcPl, true);
+      }
+    }
+  }
+}
+
+function hurtPlayer(g, pl, dmg) {
+  if (pl.invuln > 0 || pl.down) return;
+  pl.hp -= dmg;
+  pl.invuln = 0.9;
+  pl.sinceHurt = 0;
+  g.shake = 0.35;
+  burst(g, pl.x, pl.y, PAL.red, 12, 90);
+  emitEvent(g, 'hurt');
+  if (pl.hp <= 0) {
+    pl.hp = 0;
+    pl.down = true;
+    addText(g, pl.x, pl.y - 10, FAMILY[pl.char].name + ' DOWN!', PAL.red, 1.5);
+    if (alivePlayers(g).length === 0) {
+      finishGame(g, false);
+    } else if (g.mp) {
+      // a revive heart appears somewhere — a teammate must fetch it
+      g.pickups.push({ x: rnd(40, VW-40), y: rnd(40, VH-40), forPid: pl.pid, t: 0 });
+      addText(g, VW/2, 30, 'FIND THE HEART TO REVIVE ' + FAMILY[pl.char].name + '!', PAL.green, 2.5);
+    }
+  }
+}
+
+function finishGame(g, won) {
+  highScore = Math.max(highScore, g.score);
+  net.overInfo = { won, score: g.score, kills: g.kills, round: g.round,
+                   team: g.players.map(p => p.char), allies: g.allies.map(a => a.id) };
+  state = won ? S.VICTORY : S.GAMEOVER;
+  playEvent(won ? 'victory' : 'gameover');
+  if (net.mode === 'host') hostBroadcast({ t: 'over', info: net.overInfo });
+}
+
+// ---------- Firing ----------
+function nearestEnemy(g, x, y) {
+  let best = null, bd = Infinity;
+  for (const e of g.enemies) {
+    if (e.dead) continue;
+    const d = (e.x-x)*(e.x-x) + (e.y-y)*(e.y-y);
+    if (d < bd) { bd = d; best = e; }
+  }
+  return best;
+}
+
+function fireStyle(g, x, y, aimX, aimY, opts) {
+  // opts: {dmg, pierce, speed, shots, homing, aoe, col, size, srcPid}
+  const base = Math.atan2(aimY, aimX);
+  const spread = 0.16;
+  const n = opts.shots;
+  for (let i = 0; i < n; i++) {
+    const off = n > 1 ? (i - (n-1)/2) * spread : 0;
+    const a = base + off;
+    g.bullets.push({
+      x, y, vx: Math.cos(a)*opts.speed, vy: Math.sin(a)*opts.speed,
+      dmg: opts.dmg, pierce: opts.pierce, homing: opts.homing, aoe: opts.aoe,
+      srcPid: opts.srcPid, hitSet: new Set(), life: 2.2, col: opts.col, size: opts.size
+    });
+  }
+}
+
+function firePlayer(g, pl) {
+  const t = nearestEnemy(g, pl.x, pl.y);
+  let dx, dy;
+  if (t) {
+    const d = Math.hypot(t.x - pl.x, t.y - pl.y) || 1;
+    dx = (t.x - pl.x) / d; dy = (t.y - pl.y) / d;
+  } else {
+    dx = pl.lastDir.x; dy = pl.lastDir.y;
+  }
+  const f = FAMILY[pl.char];
+  const opts = { dmg: pl.damage, pierce: pl.pierce, speed: pl.bulletSpeed, shots: pl.shots,
+                 homing: pl.homing, aoe: pl.aoe, col: f.col, size: pl.damage >= 2 ? 3 : 2, srcPid: pl.pid };
+  fireStyle(g, pl.x, pl.y, dx, dy, opts);
+  if (pl.rear) fireStyle(g, pl.x, pl.y, -dx, -dy, Object.assign({}, opts, {shots: 1}));
+  emitEvent(g, 'shoot');
+}
+
+function fireAlly(g, ally) {
+  const f = FAMILY[ally.id];
+  const t = nearestEnemy(g, ally.x, ally.y);
+  if (!t) return;
+  const d = Math.hypot(t.x - ally.x, t.y - ally.y) || 1;
+  const leader = g.players[0];
+  fireStyle(g, ally.x, ally.y, (t.x-ally.x)/d, (t.y-ally.y)/d, {
+    dmg: leader.damage / FAMILY[leader.char].dmgMul * f.dmgMul, // allies scale with leader's damage upgrades
+    pierce: f.pierce, speed: f.bSpeed, shots: f.spread,
+    homing: f.homing, aoe: f.aoe, col: f.col, size: f.dmgMul >= 2 ? 3 : 2, srcPid: -1
+  });
+  emitEvent(g, 'shoot');
+}
+
+// ---------- Round flow ----------
+function startRound(g) {
+  g.roundTime = 0;
+  g.roundLen = 30 + g.round * 4;
+  g.spawnTimer = 0.4;
+  g.introTimer = 1.4;
+  g.enemies = [];
+  g.bullets = [];
+  g.ebullets = [];
+  g.boss = null;
+  // revive downed players with half HP
+  for (const p of g.players) {
+    if (p.down) { p.down = false; p.hp = Math.max(1, Math.ceil(p.maxHp / 2)); p.invuln = 1.5; }
+  }
+  state = S.ROUNDINTRO;
+  if (g.round === MAX_ROUND) spawnBoss(g);
+  if (net.mode === 'host') hostBroadcast({ t: 'round', n: g.round });
+}
+
+function endRound(g) {
+  g.score += 100 + g.round * 25;
+  g.ebullets = [];
+  if (g.round >= MAX_ROUND) {
+    finishGame(g, true);
+    return;
+  }
+  playEvent('clear');
+  g.upgradeChoices = {};
+  g.pendingPicks = new Set();
+  for (const p of g.players) {
+    g.upgradeChoices[p.pid] = g.mp ? rollStatUpgrades(p) : rollSoloUpgrades(g);
+    g.pendingPicks.add(p.pid);
+  }
+  net.myUpgrades = g.upgradeChoices[net.myId];
+  net.picked = false;
+  state = S.UPGRADE;
+  if (net.mode === 'host') {
+    for (const c of net.conns) {
+      c.send({ t: 'upgrade', choices: g.upgradeChoices[c.pid] || [] });
+    }
+  }
+}
+
+function takePick(g, pid, idx) {
+  if (!g.pendingPicks.has(pid)) return;
+  const cards = g.upgradeChoices[pid] || [];
+  const card = cards[idx];
+  if (!card) return;
+  applyUpgrade(g, pid, card);
+  g.pendingPicks.delete(pid);
+  if (g.pendingPicks.size === 0) {
+    g.round++;
+    startRound(g);
+  } else if (net.mode === 'host') {
+    hostBroadcast({ t: 'waiting', n: g.pendingPicks.size });
+  }
+}
+
+// ---------- Host simulation step ----------
+function simStep(g, dt) {
+  const alive = alivePlayers(g);
+
+  // players
+  for (const pl of g.players) {
+    if (pl.down) continue;
+    const dir = pl.pid === net.myId ? localDir() : pl.dir;
+    if (dir.x || dir.y) {
+      const m = Math.hypot(dir.x, dir.y) || 1;
+      pl.lastDir = { x: dir.x / m, y: dir.y / m };
+    }
+    pl.x = Math.max(6, Math.min(VW-6, pl.x + dir.x * pl.speed * dt));
+    pl.y = Math.max(6, Math.min(VH-6, pl.y + dir.y * pl.speed * dt));
+    pl.invuln = Math.max(0, pl.invuln - dt);
+    // gentle regen: after 3s without damage, recover 1 HP every 5s
+    pl.sinceHurt += dt;
+    if (pl.sinceHurt > 3 && pl.hp < pl.maxHp) {
+      pl.regenT += dt;
+      if (pl.regenT >= 5) {
+        pl.regenT = 0;
+        pl.hp = Math.min(pl.maxHp, pl.hp + 1);
+        addText(g, pl.x, pl.y - 10, '+1', PAL.green, 0.7);
+      }
+    } else if (pl.sinceHurt <= 3) {
+      pl.regenT = 0;
+    }
+    // revive hearts: grab one to bring a teammate back
+    for (const pk of g.pickups) {
+      if (pk.taken) continue;
+      if ((pk.x-pl.x)*(pk.x-pl.x) + (pk.y-pl.y)*(pk.y-pl.y) < 10*10) {
+        const target = g.players.find(q => q.pid === pk.forPid && q.down);
+        pk.taken = true;
+        if (target) {
+          target.down = false;
+          target.hp = Math.max(1, Math.ceil(target.maxHp / 2));
+          target.invuln = 2;
+          target.sinceHurt = 0;
+          target.x = Math.max(6, Math.min(VW-6, pl.x + 12));
+          target.y = pl.y;
+          addText(g, pl.x, pl.y - 14, FAMILY[target.char].name + ' IS BACK!', PAL.green, 1.5);
+          burst(g, pl.x, pl.y, PAL.green, 14, 90);
+          emitEvent(g, 'revive');
+        }
+      }
+    }
+    pl.fireCd -= dt;
+    if (pl.fireCd <= 0 && g.enemies.length + 1 > 0) {
+      firePlayer(g, pl);
+      pl.fireCd = 1 / pl.fireRate;
+    }
+    // orbs
+    if (pl.orbs > 0) {
+      pl.orbAngle += dt * 3.2;
+      for (let i = 0; i < pl.orbs; i++) {
+        const a = pl.orbAngle + (i / pl.orbs) * Math.PI * 2;
+        const ox = pl.x + Math.cos(a) * 18, oy = pl.y + Math.sin(a) * 18;
+        for (const e of g.enemies) {
+          if (e.dead) continue;
+          const rr = e.r + 3;
+          if ((e.x-ox)*(e.x-ox) + (e.y-oy)*(e.y-oy) < rr*rr) {
+            if (!e.orbCd || e.orbCd <= 0) {
+              damageEnemy(g, e, pl.damage * 0.8, pl);
+              e.orbCd = 0.35;
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // solo allies follow the leader
+  if (!g.mp) {
+    const p = g.players[0];
+    g.trail.push({x: p.x, y: p.y});
+    if (g.trail.length > 200) g.trail.shift();
+    for (let i = 0; i < g.allies.length; i++) {
+      const a = g.allies[i];
+      const back = (i + 1) * 14;
+      const idx = Math.max(0, g.trail.length - 1 - back);
+      const target = g.trail[idx] || p;
+      a.x += (target.x - a.x) * Math.min(1, dt * 10);
+      a.y += (target.y - a.y) * Math.min(1, dt * 10);
+      a.fireCd -= dt;
+      if (a.fireCd <= 0) {
+        fireAlly(g, a);
+        a.fireCd = 1 / FAMILY[a.id].fireRate;
+      }
+    }
+  }
+
+  // spawn
+  g.roundTime += dt;
+  if (g.round < MAX_ROUND) {
+    g.spawnTimer -= dt;
+    if (g.spawnTimer <= 0) {
+      const crew = g.players.length + g.allies.length;
+      const aliveEnemies = g.enemies.filter(e => !e.dead).length;
+      const cap = Math.floor(5 + g.round * 1.5 + (g.players.length - 1) * 2);
+      let count = 1 + (Math.random() < 0.12 + g.round * 0.04 ? 1 : 0);
+      if (g.mp && Math.random() < (g.players.length - 1) * 0.18) count++;
+      count = Math.max(0, Math.min(count, cap - aliveEnemies));
+      for (let i = 0; i < count; i++) spawnEnemy(g);
+      const base = Math.max(0.45, 1.7 - g.round * 0.11 - crew * 0.03);
+      g.spawnTimer = rnd(base * 0.7, base * 1.3);
+    }
+    if (g.roundTime >= g.roundLen) { endRound(g); return; }
+  } else if (g.boss && g.boss.dead) {
+    endRound(g); return;
+  }
+
+  // enemies
+  for (const e of g.enemies) {
+    if (e.dead) continue;
+    e.flash = Math.max(0, e.flash - dt);
+    if (e.orbCd) e.orbCd -= dt;
+    const tp = nearestPlayer(g, e.x, e.y);
+    if (!tp) break;
+    const dx = tp.x - e.x, dy = tp.y - e.y;
+    const d = Math.hypot(dx, dy) || 1;
+
+    if (e.type === 'chaser' || e.type === 'tank') {
+      e.x += (dx/d) * e.speed * dt;
+      e.y += (dy/d) * e.speed * dt;
+    } else if (e.type === 'shooter') {
+      const want = 90;
+      const dir = d > want ? 1 : -0.7;
+      e.x += (dx/d) * e.speed * dir * dt;
+      e.y += (dy/d) * e.speed * dir * dt;
+      e.x = Math.max(4, Math.min(VW-4, e.x));
+      e.y = Math.max(4, Math.min(VH-4, e.y));
+      e.fireCd -= dt;
+      if (e.fireCd <= 0 && d < 180) {
+        const s = 85;
+        g.ebullets.push({x:e.x, y:e.y, vx:(dx/d)*s, vy:(dy/d)*s, life: 3});
+        e.fireCd = rnd(1.6, 2.6) - g.round * 0.08;
+      }
+    } else if (e.type === 'boss') {
+      e.t += dt;
+      e.x += (dx/d) * e.speed * dt + Math.cos(e.t * 1.7) * 12 * dt;
+      e.y += (dy/d) * e.speed * 0.6 * dt;
+      e.x = Math.max(20, Math.min(VW-20, e.x));
+      e.y = Math.max(20, Math.min(VH-20, e.y));
+      e.fireCd -= dt; e.burstCd -= dt; e.spawnCd -= dt;
+      if (e.fireCd <= 0) {
+        const s = 95;
+        g.ebullets.push({x:e.x, y:e.y, vx:(dx/d)*s, vy:(dy/d)*s, life: 4});
+        e.fireCd = 0.8;
+      }
+      if (e.burstCd <= 0) {
+        const n = 12;
+        for (let i=0;i<n;i++) {
+          const a = (i/n) * Math.PI * 2 + e.t;
+          g.ebullets.push({x:e.x, y:e.y, vx:Math.cos(a)*70, vy:Math.sin(a)*70, life: 4});
+        }
+        e.burstCd = 3.2;
+        g.shake = Math.max(g.shake, 0.2);
+        emitEvent(g, 'burst');
+      }
+      if (e.spawnCd <= 0) {
+        for (let i=0;i<2;i++) spawnEnemy(g);
+        e.spawnCd = 5;
+      }
+    }
+
+    // contact damage with any player
+    for (const pl of alive) {
+      const rr = e.r + pl.r;
+      if ((e.x-pl.x)*(e.x-pl.x) + (e.y-pl.y)*(e.y-pl.y) < rr*rr) {
+        hurtPlayer(g, pl, 1);
+        if (state !== S.PLAYING) return;
+      }
+    }
+  }
+  g.enemies = g.enemies.filter(e => !e.dead || e === g.boss);
+
+  // friendly bullets
+  for (const b of g.bullets) {
+    if (b.homing) {
+      const t = nearestEnemy(g, b.x, b.y);
+      if (t) {
+        const d = Math.hypot(t.x - b.x, t.y - b.y) || 1;
+        const sp = Math.hypot(b.vx, b.vy);
+        const steer = 4.5 * dt;
+        b.vx += ((t.x - b.x) / d * sp - b.vx) * steer;
+        b.vy += ((t.y - b.y) / d * sp - b.vy) * steer;
+        const m = Math.hypot(b.vx, b.vy) || 1;
+        b.vx = b.vx / m * sp; b.vy = b.vy / m * sp;
+      }
+    }
+    b.x += b.vx * dt; b.y += b.vy * dt; b.life -= dt;
+    if (b.x < -10 || b.x > VW+10 || b.y < -10 || b.y > VH+10) b.life = 0;
+    if (b.life <= 0) continue;
+    const srcPl = g.players.find(p => p.pid === b.srcPid);
+    for (const e of g.enemies) {
+      if (e.dead || b.hitSet.has(e)) continue;
+      const rr = e.r + 2;
+      if ((e.x-b.x)*(e.x-b.x) + (e.y-b.y)*(e.y-b.y) < rr*rr) {
+        b.hitSet.add(e);
+        damageEnemy(g, e, b.dmg, srcPl);
+        if (b.aoe) {
+          const R = 20;
+          burst(g, b.x, b.y, PAL.teal, 10, 90);
+          g.shake = Math.max(g.shake, 0.08);
+          for (const o of g.enemies) {
+            if (o !== e && !o.dead && dist2(o, b) < R*R) damageEnemy(g, o, b.dmg * 0.6, srcPl, true);
+          }
+        }
+        emitEvent(g, 'hit');
+        addText(g, e.x, e.y - 6, Math.round(b.dmg * 10) / 10 + '', b.col, 0.5);
+        if (b.pierce > 0) { b.pierce--; } else { b.life = 0; break; }
+      }
+    }
+  }
+  g.bullets = g.bullets.filter(b => b.life > 0);
+
+  // enemy bullets
+  for (const b of g.ebullets) {
+    b.x += b.vx * dt; b.y += b.vy * dt; b.life -= dt;
+    for (const pl of alivePlayers(g)) {
+      const rr = pl.r + 2;
+      if ((b.x-pl.x)*(b.x-pl.x) + (b.y-pl.y)*(b.y-pl.y) < rr*rr) {
+        b.life = 0;
+        hurtPlayer(g, pl, 1);
+        break;
+      }
+    }
+    if (state !== S.PLAYING) return;
+  }
+  g.ebullets = g.ebullets.filter(b => b.life > 0 && b.x > -10 && b.x < VW+10 && b.y > -10 && b.y < VH+10);
+
+  // particles & texts
+  for (const pk of g.pickups) pk.t += dt;
+  g.pickups = g.pickups.filter(pk => !pk.taken && g.players.some(p => p.pid === pk.forPid && p.down));
+  for (const pt of g.particles) { pt.x += pt.vx*dt; pt.y += pt.vy*dt; pt.life -= dt; }
+  g.particles = g.particles.filter(pt => pt.life > 0);
+  for (const t of g.texts) { t.y -= 14*dt; t.life -= dt; }
+  g.texts = g.texts.filter(t => t.life > 0);
+
+  g.shake = Math.max(0, g.shake - dt);
+}
+
+// ---------- Networking ----------
+const R1 = x => Math.round(x * 10) / 10;
+
+function makeSnapshot(g) {
+  const snap = {
+    t: 'state',
+    st: state,
+    round: g.round,
+    left: g.round < MAX_ROUND ? Math.max(0, Math.ceil(g.roundLen - g.roundTime)) : -1,
+    score: g.score,
+    shake: R1(g.shake),
+    intro: state === S.ROUNDINTRO ? R1(g.introTimer) : 0,
+    players: g.players.map(p => ({ pid: p.pid, ch: p.char, x: R1(p.x), y: R1(p.y),
+      hp: p.hp, mhp: p.maxHp, inv: p.invuln > 0 ? 1 : 0, dn: p.down ? 1 : 0,
+      orbs: p.orbs, oa: R1(p.orbAngle) })),
+    enemies: g.enemies.filter(e => !e.dead).map(e => ({ eid: e.eid, ty: e.type, x: R1(e.x), y: R1(e.y), f: e.flash > 0 ? 1 : 0 })),
+    bullets: g.bullets.map(b => ({ x: R1(b.x), y: R1(b.y), vx: Math.round(b.vx), vy: Math.round(b.vy), c: b.col, s: b.size })),
+    ebul: g.ebullets.map(b => ({ x: R1(b.x), y: R1(b.y), vx: Math.round(b.vx), vy: Math.round(b.vy) })),
+    boss: g.boss && !g.boss.dead ? { hp: Math.round(g.boss.hp), mhp: g.boss.maxHp } : null,
+    pk: g.pickups.filter(p => !p.taken).map(p => ({ x: R1(p.x), y: R1(p.y), t: R1(p.t) })),
+    ev: g.events.splice(0)
+  };
+  return snap;
+}
+
+function hostBroadcast(msg) {
+  for (const c of net.conns) {
+    try { c.send(msg); } catch (e) {}
+  }
+}
+
+function sendLobby() {
+  const lobby = net.lobby.map(l => ({ pid: l.pid, char: l.char }));
+  hostBroadcast({ t: 'lobby', lobby });
+}
+
+function shortCode() {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
+  let s = '';
+  for (let i = 0; i < 4; i++) s += chars[Math.floor(Math.random()*chars.length)];
+  return s;
+}
+
+function startHost() {
+  if (typeof Peer === 'undefined') { net.err = 'multiplayer lib failed to load — check connection'; return; }
+  net.mode = 'host';
+  net.code = shortCode();
+  net.err = 'setting up room...';
+  net.myId = 0;
+  net.lobby = [{ pid: 0, char: null }];
+  net.peer = new Peer('pxswarm-' + net.code);
+  net.peer.on('open', () => {
+    net.err = '';
+    state = S.LOBBY;
+  });
+  net.peer.on('error', err => {
+    if (String(err.type) === 'unavailable-id') { // rare collision — reroll
+      net.peer.destroy(); startHost(); return;
+    }
+    net.err = 'network error: ' + err.type;
+  });
+  net.peer.on('connection', conn => {
+    conn.on('open', () => {
+      if (state !== S.LOBBY || net.lobby.length >= 7) { conn.close(); return; }
+      conn.pid = net.nextPid++;
+      net.conns.push(conn);
+      net.lobby.push({ pid: conn.pid, char: null });
+      conn.send({ t: 'welcome', pid: conn.pid });
+      sendLobby();
+    });
+    conn.on('data', msg => hostOnData(conn, msg));
+    conn.on('close', () => {
+      net.conns = net.conns.filter(c => c !== conn);
+      net.lobby = net.lobby.filter(l => l.pid !== conn.pid);
+      if (game) {
+        const pl = game.players.find(p => p.pid === conn.pid);
+        if (pl) { pl.down = true; pl.hp = 0; game.pendingPicks.delete(conn.pid);
+          if (state === S.UPGRADE && game.pendingPicks.size === 0) { game.round++; startRound(game); }
+          if (state === S.PLAYING && alivePlayers(game).length === 0) finishGame(game, false);
+        }
+      }
+      sendLobby();
+    });
+  });
+}
+
+function hostOnData(conn, msg) {
+  if (msg.t === 'char') {
+    // reject if taken
+    if (net.lobby.some(l => l.char === msg.char)) { sendLobby(); return; }
+    const entry = net.lobby.find(l => l.pid === conn.pid);
+    if (entry) entry.char = msg.char;
+    sendLobby();
+  } else if (msg.t === 'input') {
+    if (game) {
+      const pl = game.players.find(p => p.pid === conn.pid);
+      if (pl) pl.dir = { x: Math.max(-1, Math.min(1, msg.x)), y: Math.max(-1, Math.min(1, msg.y)) };
+    }
+  } else if (msg.t === 'pick') {
+    if (game && state === S.UPGRADE) takePick(game, conn.pid, msg.i);
+  }
+}
+
+function hostStartGame() {
+  const defs = net.lobby.filter(l => l.char).map(l => ({ pid: l.pid, char: l.char }));
+  if (!defs.some(d => d.pid === 0)) return; // host must pick
+  game = newGame(defs);
+  hostBroadcast({ t: 'start', players: defs });
+  startRound(game);
+}
+
+function startJoin() {
+  if (typeof Peer === 'undefined') { net.err = 'multiplayer lib failed to load — check connection'; return; }
+  const code = (window.prompt('Enter 4-letter room code:') || '').trim().toUpperCase();
+  if (!/^[A-Z]{4}$/.test(code)) { net.err = code ? 'codes are 4 letters' : ''; return; }
+  net.mode = 'client';
+  net.code = code;
+  net.err = 'connecting...';
+  net.peer = new Peer();
+  net.peer.on('open', () => {
+    const conn = net.peer.connect('pxswarm-' + code, { reliable: false });
+    net.hostConn = conn;
+    let opened = false;
+    conn.on('open', () => { opened = true; net.err = ''; state = S.LOBBY; });
+    conn.on('data', msg => clientOnData(msg));
+    conn.on('close', () => {
+      if (state !== S.GAMEOVER && state !== S.VICTORY) {
+        net.err = 'lost connection to host';
+        resetToTitle();
+      }
+    });
+    setTimeout(() => { if (!opened) net.err = 'no room found for ' + code; }, 6000);
+  });
+  net.peer.on('error', err => { net.err = 'network error: ' + err.type; });
+}
+
+function clientSend(msg) {
+  if (net.hostConn && net.hostConn.open) { try { net.hostConn.send(msg); } catch (e) {} }
+}
+
+function clientOnData(msg) {
+  if (msg.t === 'welcome') { net.myId = msg.pid; }
+  else if (msg.t === 'lobby') { net.lobby = msg.lobby; }
+  else if (msg.t === 'start') {
+    net.snapPrev = null; net.snapCur = null;
+    state = S.ROUNDINTRO;
+  }
+  else if (msg.t === 'round') { net.picked = false; net.myUpgrades = null; state = S.ROUNDINTRO; }
+  else if (msg.t === 'upgrade') { net.myUpgrades = msg.choices; net.picked = false; state = S.UPGRADE; playEvent('clear'); }
+  else if (msg.t === 'waiting') { /* others still picking */ }
+  else if (msg.t === 'over') {
+    net.overInfo = msg.info;
+    state = msg.info.won ? S.VICTORY : S.GAMEOVER;
+    playEvent(msg.info.won ? 'victory' : 'gameover');
+  }
+  else if (msg.t === 'state') {
+    net.snapPrev = net.snapCur;
+    const now = performance.now() / 1000;
+    if (net.snapCur) net.snapGap = Math.min(0.25, Math.max(0.02, now - net.snapAt));
+    net.snapCur = msg;
+    net.snapAt = now;
+    if (msg.st === S.PLAYING && state === S.ROUNDINTRO && msg.intro <= 0) state = S.PLAYING;
+    if (msg.st === S.PLAYING) state = S.PLAYING;
+    if (msg.st === S.ROUNDINTRO) state = S.ROUNDINTRO;
+    for (const ev of msg.ev) playEvent(ev);
+  }
+}
+
+function resetToTitle() {
+  if (net.peer) { try { net.peer.destroy(); } catch (e) {} }
+  net.mode = 'solo'; net.peer = null; net.conns = []; net.hostConn = null;
+  net.code = ''; net.myId = 0; net.nextPid = 1; net.lobby = [];
+  net.myChar = null; net.selIdx = 0; net.snapPrev = null; net.snapCur = null;
+  net.myUpgrades = null; net.picked = false; net.overInfo = null;
+  game = null;
+  state = S.TITLE;
+}
+
+// ---------- Menus: layout + hit testing ----------
+function titleButtons() {
+  return [
+    { label: 'SOLO', x: VW/2 - 130, y: 185, w: 120, h: 26 },
+    { label: 'MULTIPLAYER', x: VW/2 + 10, y: 185, w: 120, h: 26 }
+  ];
+}
+function mpButtons() {
+  return [
+    { label: 'HOST A ROOM', x: VW/2 - 130, y: 130, w: 120, h: 26 },
+    { label: 'JOIN A ROOM', x: VW/2 + 10, y: 130, w: 120, h: 26 },
+    { label: 'BACK', x: VW/2 - 60, y: 200, w: 120, h: 22 }
+  ];
+}
+function charCells() {
+  const cells = [];
+  const cols = 4, cw = 92, ch = 62, gap = 10;
+  const rows = Math.ceil(CHAR_IDS.length / cols);
+  const y0 = 78;
+  for (let i = 0; i < CHAR_IDS.length; i++) {
+    const row = Math.floor(i / cols);
+    const inRow = Math.min(cols, CHAR_IDS.length - row * cols);
+    const x0 = (VW - (inRow * cw + (inRow-1) * gap)) / 2;
+    cells.push({ id: CHAR_IDS[i], x: x0 + (i % cols) * (cw + gap), y: y0 + row * (ch + gap), w: cw, h: ch });
+  }
+  return cells;
+}
+function lobbyStartButton() { return { label: 'START GAME', x: VW/2 - 60, y: 236, w: 120, h: 24 }; }
+const CARD = { w: 130, h: 120, gap: 14, y: 80 };
+function cardRect(i) {
+  const total = CARD.w * 3 + CARD.gap * 2;
+  const x0 = (VW - total) / 2;
+  return { x: x0 + i * (CARD.w + CARD.gap), y: CARD.y, w: CARD.w, h: CARD.h };
+}
+function inRect(x, y, r) { return x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h; }
+
+function chooseChar(id) {
+  if (state === S.CHARSELECT) {
+    net.myChar = id;
+    game = newGame([{ pid: 0, char: id }]);
+    net.myId = 0;
+    startRound(game);
+  } else if (state === S.LOBBY) {
+    const taken = net.lobby.some(l => l.char === id && l.pid !== net.myId);
+    if (taken) return;
+    net.myChar = id;
+    if (net.mode === 'host') {
+      const entry = net.lobby.find(l => l.pid === 0);
+      if (entry) entry.char = id;
+      sendLobby();
+    } else {
+      clientSend({ t: 'char', char: id });
+    }
+  }
+}
+
+function pickUpgrade(idx) {
+  const cards = net.myUpgrades || (game && game.upgradeChoices[net.myId]);
+  if (!cards || !cards[idx] || net.picked) return;
+  net.picked = true;
+  if (net.mode === 'client') {
+    clientSend({ t: 'pick', i: idx });
+    playEvent(cards[idx].family ? 'join' : 'upgrade');
+  } else {
+    takePick(game, net.myId, idx);
+  }
+}
+
+function handleTap(x, y) {
+  if (state === S.TITLE) {
+    const b = titleButtons();
+    if (inRect(x, y, b[0])) { state = S.CHARSELECT; net.selIdx = 0; }
+    else if (inRect(x, y, b[1])) { state = S.MPMENU; net.err = ''; }
+  } else if (state === S.MPMENU) {
+    const b = mpButtons();
+    if (inRect(x, y, b[0])) startHost();
+    else if (inRect(x, y, b[1])) startJoin();
+    else if (inRect(x, y, b[2])) resetToTitle();
+  } else if (state === S.CHARSELECT || state === S.LOBBY) {
+    for (const c of charCells()) {
+      if (inRect(x, y, c)) { chooseChar(c.id); return; }
+    }
+    if (state === S.LOBBY && net.mode === 'host' && inRect(x, y, lobbyStartButton())) hostStartGame();
+  } else if (state === S.UPGRADE) {
+    for (let i = 0; i < 3; i++) {
+      if (inRect(x, y, cardRect(i))) { pickUpgrade(i); return; }
+    }
+  } else if (state === S.GAMEOVER || state === S.VICTORY) {
+    resetToTitle();
+  }
+}
+
+function handleMenuKey(code) {
+  if (state === S.TITLE) {
+    if (code === 'Digit1' || code === 'Enter' || code === 'Space') { state = S.CHARSELECT; net.selIdx = 0; }
+    else if (code === 'Digit2' || code === 'KeyM') { state = S.MPMENU; net.err = ''; }
+  } else if (state === S.MPMENU) {
+    if (code === 'Digit1' || code === 'KeyH') startHost();
+    else if (code === 'Digit2' || code === 'KeyJ') startJoin();
+    else if (code === 'Escape') resetToTitle();
+  } else if (state === S.CHARSELECT || state === S.LOBBY) {
+    const n = CHAR_IDS.length;
+    if (code === 'ArrowRight' || code === 'KeyD') net.selIdx = (net.selIdx + 1) % n;
+    else if (code === 'ArrowLeft' || code === 'KeyA') net.selIdx = (net.selIdx + n - 1) % n;
+    else if (code === 'ArrowDown' || code === 'KeyS') net.selIdx = Math.min(n - 1, net.selIdx + 4);
+    else if (code === 'ArrowUp' || code === 'KeyW') net.selIdx = Math.max(0, net.selIdx - 4);
+    else if (code === 'Enter' || code === 'Space') {
+      chooseChar(CHAR_IDS[net.selIdx]);
+      if (state === S.LOBBY && net.mode === 'host' && code === 'Enter' && net.myChar) { /* enter picks; S starts */ }
+    }
+    else if (code === 'KeyG' && state === S.LOBBY && net.mode === 'host') hostStartGame();
+    else if (code === 'Escape') resetToTitle();
+  } else if (state === S.UPGRADE) {
+    let idx = -1;
+    if (code === 'Digit1' || code === 'Numpad1') idx = 0;
+    if (code === 'Digit2' || code === 'Numpad2') idx = 1;
+    if (code === 'Digit3' || code === 'Numpad3') idx = 2;
+    if (idx >= 0) pickUpgrade(idx);
+  } else if (state === S.GAMEOVER || state === S.VICTORY) {
+    if (code === 'Enter' || code === 'Space') resetToTitle();
+  }
+}
+
+// ---------- Update ----------
+let sinceSnap = 0, sinceInput = 0;
+function update(dt) {
+  const isAuthority = net.mode !== 'client';
+
+  if (state === S.ROUNDINTRO && isAuthority && game) {
+    game.introTimer -= dt;
+    if (game.introTimer <= 0) state = S.PLAYING;
+  }
+
+  if (state === S.PLAYING || state === S.ROUNDINTRO) {
+    if (isAuthority && game && state === S.PLAYING) {
+      simStep(game, dt);
+      // play my own events locally
+      // (events are consumed into snapshots for clients; play them here too)
+    }
+    if (net.mode === 'host' && game) {
+      sinceSnap += dt;
+      if (sinceSnap >= 0.05) {
+        sinceSnap = 0;
+        const snap = makeSnapshot(game);
+        for (const ev of snap.ev) playEvent(ev);
+        hostBroadcast(snap);
+      }
+    } else if (net.mode === 'solo' && game) {
+      // solo: play events straight away
+      for (const ev of game.events.splice(0)) playEvent(ev);
+    } else if (net.mode === 'client') {
+      sinceInput += dt;
+      if (sinceInput >= 0.04) {
+        sinceInput = 0;
+        const d = localDir();
+        clientSend({ t: 'input', x: R1(d.x), y: R1(d.y) });
+      }
+    }
+  }
+}
+
+// ---------- Render ----------
+function px(x) { return Math.round(x); }
+function drawSprite(spr, x, y) { ctx.drawImage(spr, px(x - spr.width/2), px(y - spr.height/2)); }
+function text(str, x, y, col, size, align) {
+  size = size || 1; align = align || 'left';
+  ctx.save();
+  ctx.font = (8*size) + 'px monospace';
+  ctx.textAlign = align;
+  ctx.textBaseline = 'top';
+  ctx.fillStyle = col;
+  ctx.fillText(str, px(x), px(y));
+  ctx.restore();
+}
+function drawArena() {
+  ctx.fillStyle = PAL.bg;
+  ctx.fillRect(0, 0, VW, VH);
+  ctx.fillStyle = PAL.grid;
+  for (let x = 0; x < VW; x += 24) ctx.fillRect(x, 0, 1, VH);
+  for (let y = 0; y < VH; y += 24) ctx.fillRect(0, y, VW, 1);
+  ctx.strokeStyle = PAL.wall;
+  ctx.lineWidth = 2;
+  ctx.strokeRect(1, 1, VW-2, VH-2);
+}
+function drawButton(b, hot) {
+  ctx.fillStyle = PAL.dark;
+  ctx.fillRect(b.x, b.y, b.w, b.h);
+  ctx.strokeStyle = hot ? PAL.yellow : PAL.blue;
+  ctx.lineWidth = 2;
+  ctx.strokeRect(b.x+1, b.y+1, b.w-2, b.h-2);
+  text(b.label, b.x + b.w/2, b.y + b.h/2 - 5, PAL.white, 1, 'center');
+}
+
+function heartRow(hp, maxHp, x, y) {
+  for (let i = 0; i < maxHp; i++) {
+    ctx.fillStyle = i < hp ? PAL.red : PAL.wall;
+    const hx = x + i * 7, hy = y;
+    ctx.fillRect(hx, hy+1, 2, 2); ctx.fillRect(hx+3, hy+1, 2, 2);
+    ctx.fillRect(hx, hy+2, 5, 2); ctx.fillRect(hx+1, hy+4, 3, 1); ctx.fillRect(hx+2, hy+5, 1, 1);
+  }
+}
+
+// interpolate client snapshots
+function lerpSnap() {
+  const cur = net.snapCur;
+  if (!cur) return null;
+  const prev = net.snapPrev;
+  const now = performance.now() / 1000;
+  let t = (now - net.snapAt) / (net.snapGap || 0.05);
+  t = Math.max(0, Math.min(1, t));
+  const extrapDt = now - net.snapAt;
+
+  const out = {
+    round: cur.round, left: cur.left, score: cur.score, shake: cur.shake,
+    boss: cur.boss, pk: cur.pk || [], players: [], enemies: [], bullets: [], ebul: []
+  };
+  for (const p of cur.players) {
+    let x = p.x, y = p.y;
+    if (prev) {
+      const pp = prev.players.find(q => q.pid === p.pid);
+      if (pp) { x = pp.x + (p.x - pp.x) * t; y = pp.y + (p.y - pp.y) * t; }
+    }
+    out.players.push(Object.assign({}, p, {x, y}));
+  }
+  for (const e of cur.enemies) {
+    let x = e.x, y = e.y;
+    if (prev) {
+      const pe = prev.enemies.find(q => q.eid === e.eid);
+      if (pe) { x = pe.x + (e.x - pe.x) * t; y = pe.y + (e.y - pe.y) * t; }
+    }
+    out.enemies.push(Object.assign({}, e, {x, y}));
+  }
+  for (const b of cur.bullets) out.bullets.push({ x: b.x + b.vx * extrapDt, y: b.y + b.vy * extrapDt, c: b.c, s: b.s });
+  for (const b of cur.ebul) out.ebul.push({ x: b.x + b.vx * extrapDt, y: b.y + b.vy * extrapDt });
+  return out;
+}
+
+function drawReviveHeart(x, y, t) {
+  const pulse = 1 + Math.sin(t * 5) * 0.15;
+  const s = 2 * pulse;
+  // glow ring
+  ctx.globalAlpha = 0.25 + Math.sin(t * 5) * 0.1;
+  ctx.strokeStyle = PAL.green;
+  ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.arc(x, y, 9 + Math.sin(t * 5) * 1.5, 0, Math.PI * 2); ctx.stroke();
+  ctx.globalAlpha = 1;
+  // pixel heart
+  ctx.fillStyle = PAL.red;
+  const hx = x - 2.5 * s, hy = y - 2.5 * s;
+  ctx.fillRect(hx + s, hy, s, s); ctx.fillRect(hx + 3*s, hy, s, s);
+  ctx.fillRect(hx, hy + s, 5*s, s);
+  ctx.fillRect(hx, hy + 2*s, 5*s, s);
+  ctx.fillRect(hx + s, hy + 3*s, 3*s, s);
+  ctx.fillRect(hx + 2*s, hy + 4*s, s, s);
+  text('REVIVE', x, y + 11, PAL.green, 1, 'center');
+}
+
+function renderWorldFromGame(g) {
+  ctx.save();
+  if (g.shake > 0) ctx.translate(rnd(-3,3)*g.shake*4, rnd(-3,3)*g.shake*4);
+
+  for (const pk of g.pickups) { if (!pk.taken) drawReviveHeart(pk.x, pk.y, pk.t); }
+  ctx.fillStyle = PAL.orange;
+  for (const b of g.ebullets) ctx.fillRect(px(b.x)-1, px(b.y)-1, 3, 3);
+  for (const b of g.bullets) {
+    ctx.fillStyle = b.col;
+    ctx.fillRect(px(b.x)-1, px(b.y)-1, b.size || 2, b.size || 2);
+  }
+  for (const e of g.enemies) {
+    if (e.dead) continue;
+    if (e.flash > 0) { ctx.save(); ctx.filter = 'brightness(3)'; drawSprite(SPR[e.type], e.x, e.y); ctx.restore(); ctx.filter = 'none'; }
+    else drawSprite(SPR[e.type], e.x, e.y);
+  }
+  for (const a of g.allies) drawSprite(SPR[FAMILY[a.id].sprite], a.x, a.y);
+  for (const pl of g.players) {
+    if (pl.down) {
+      ctx.globalAlpha = 0.35;
+      drawSprite(SPR[FAMILY[pl.char].sprite], pl.x, pl.y);
+      ctx.globalAlpha = 1;
+      continue;
+    }
+    if (pl.orbs > 0) {
+      ctx.fillStyle = PAL.cyan;
+      for (let i = 0; i < pl.orbs; i++) {
+        const a = pl.orbAngle + (i / pl.orbs) * Math.PI * 2;
+        ctx.fillRect(px(pl.x + Math.cos(a)*18)-2, px(pl.y + Math.sin(a)*18)-2, 4, 4);
+      }
+    }
+    if (pl.invuln <= 0 || Math.floor(pl.invuln * 12) % 2 === 0) {
+      drawSprite(SPR[FAMILY[pl.char].sprite], pl.x, pl.y);
+      if (g.mp) text(FAMILY[pl.char].name, pl.x, pl.y - 14, pl.pid === net.myId ? PAL.yellow : PAL.grey, 1, 'center');
+    }
+  }
+  for (const pt of g.particles) { ctx.fillStyle = pt.col; ctx.fillRect(px(pt.x), px(pt.y), 2, 2); }
+  for (const t of g.texts) {
+    ctx.globalAlpha = Math.max(0, t.life / t.max);
+    text(t.str, t.x, t.y, t.col, 1, 'center');
+    ctx.globalAlpha = 1;
+  }
+  ctx.restore();
+}
+
+function renderWorldFromSnap(sn) {
+  ctx.save();
+  if (sn.shake > 0) ctx.translate(rnd(-3,3)*sn.shake*4, rnd(-3,3)*sn.shake*4);
+  for (const pk of sn.pk) drawReviveHeart(pk.x, pk.y, pk.t);
+  ctx.fillStyle = PAL.orange;
+  for (const b of sn.ebul) ctx.fillRect(px(b.x)-1, px(b.y)-1, 3, 3);
+  for (const b of sn.bullets) { ctx.fillStyle = b.c; ctx.fillRect(px(b.x)-1, px(b.y)-1, b.s || 2, b.s || 2); }
+  for (const e of sn.enemies) {
+    if (e.f) { ctx.save(); ctx.filter = 'brightness(3)'; drawSprite(SPR[e.ty], e.x, e.y); ctx.restore(); ctx.filter = 'none'; }
+    else drawSprite(SPR[e.ty], e.x, e.y);
+  }
+  for (const p of sn.players) {
+    if (p.dn) { ctx.globalAlpha = 0.35; drawSprite(SPR[FAMILY[p.ch].sprite], p.x, p.y); ctx.globalAlpha = 1; continue; }
+    if (p.orbs > 0) {
+      ctx.fillStyle = PAL.cyan;
+      for (let i = 0; i < p.orbs; i++) {
+        const a = p.oa + (i / p.orbs) * Math.PI * 2;
+        ctx.fillRect(px(p.x + Math.cos(a)*18)-2, px(p.y + Math.sin(a)*18)-2, 4, 4);
+      }
+    }
+    drawSprite(SPR[FAMILY[p.ch].sprite], p.x, p.y);
+    text(FAMILY[p.ch].name, p.x, p.y - 14, p.pid === net.myId ? PAL.yellow : PAL.grey, 1, 'center');
+  }
+  ctx.restore();
+}
+
+function myHud() {
+  if (net.mode === 'client') {
+    const sn = net.snapCur;
+    if (!sn) return null;
+    const me = sn.players.find(p => p.pid === net.myId);
+    return { hp: me ? me.hp : 0, mhp: me ? me.mhp : 6, round: sn.round, left: sn.left, score: sn.score, boss: sn.boss };
+  }
+  if (!game) return null;
+  const me = game.players.find(p => p.pid === net.myId) || game.players[0];
+  return {
+    hp: me.hp, mhp: me.maxHp,
+    round: game.round,
+    left: game.round < MAX_ROUND ? Math.max(0, Math.ceil(game.roundLen - game.roundTime)) : -1,
+    score: game.score,
+    boss: game.boss && !game.boss.dead ? { hp: game.boss.hp, mhp: game.boss.maxHp } : null
+  };
+}
+
+function drawHUD() {
+  const h = myHud();
+  if (!h) return;
+  heartRow(h.hp, h.mhp, 6, 6);
+  text('SCORE ' + h.score, VW - 6, 5, PAL.white, 1, 'right');
+  if (h.left >= 0) {
+    text('ROUND ' + h.round + '  ' + h.left + 's', VW/2, 5, PAL.grey, 1, 'center');
+  } else {
+    text('ROUND ' + h.round + '  BOSS', VW/2, 5, PAL.purple, 1, 'center');
+    if (h.boss) {
+      const w = 120, hpw = Math.max(0, (h.boss.hp / h.boss.mhp) * w);
+      ctx.fillStyle = PAL.wall; ctx.fillRect(VW/2 - w/2, 16, w, 4);
+      ctx.fillStyle = PAL.purple; ctx.fillRect(VW/2 - w/2, 16, hpw, 4);
+    }
+  }
+}
+
+function render() {
+  drawArena();
+
+  if (state === S.TITLE) {
+    text('PIXEL SWARM', VW/2, 40, PAL.yellow, 3, 'center');
+    text('FINN & FAMILY vs THE SWARM', VW/2, 70, PAL.blond, 1.2, 'center');
+    const startX = VW/2 - 3 * 30;
+    for (let i = 0; i < CHAR_IDS.length; i++) {
+      const x = startX + i * 30;
+      drawSprite(SPR[FAMILY[CHAR_IDS[i]].sprite], x, 100);
+    }
+    text(IS_TOUCH ? 'drag to move — guns fire themselves' : 'WASD / arrows to move — guns fire themselves', VW/2, 125, PAL.white, 1, 'center');
+    text('team up online: host a room, share the 4-letter code', VW/2, 137, PAL.white, 1, 'center');
+    const bts = titleButtons();
+    drawButton(bts[0]); drawButton(bts[1]);
+    if (!IS_TOUCH) text('[1] solo   [2] multiplayer', VW/2, 220, PAL.grey, 1, 'center');
+    if (highScore > 0) text('HIGH SCORE ' + highScore, VW/2, 240, PAL.cyan, 1, 'center');
+    if (net.err) text(net.err, VW/2, 253, PAL.red, 1, 'center');
+    return;
+  }
+
+  if (state === S.MPMENU) {
+    text('MULTIPLAYER', VW/2, 60, PAL.yellow, 2, 'center');
+    text('one player hosts and shares the room code', VW/2, 92, PAL.grey, 1, 'center');
+    const bts = mpButtons();
+    drawButton(bts[0]); drawButton(bts[1]); drawButton(bts[2]);
+    if (!IS_TOUCH) text('[1] host   [2] join   [esc] back', VW/2, 175, PAL.grey, 1, 'center');
+    if (net.err) text(net.err, VW/2, 235, PAL.red, 1, 'center');
+    return;
+  }
+
+  if (state === S.CHARSELECT || state === S.LOBBY) {
+    const isLobby = state === S.LOBBY;
+    text(isLobby ? 'ROOM ' + net.code : 'CHOOSE YOUR CHARACTER', VW/2, 20, PAL.yellow, 2, 'center');
+    if (isLobby) {
+      const n = net.lobby.length;
+      text(n + ' player' + (n === 1 ? '' : 's') + ' in room — everyone pick a character', VW/2, 44, PAL.grey, 1, 'center');
+      if (net.mode === 'host') text('share the code! friends tap MULTIPLAYER > JOIN', VW/2, 56, PAL.grey, 1, 'center');
+    } else {
+      text('your character fights their own way', VW/2, 48, PAL.grey, 1, 'center');
+    }
+    const cells = charCells();
+    for (let i = 0; i < cells.length; i++) {
+      const c = cells[i];
+      const id = c.id;
+      const f = FAMILY[id];
+      const takenBy = isLobby ? net.lobby.find(l => l.char === id) : null;
+      const isMine = (isLobby && takenBy && takenBy.pid === net.myId) || (!isLobby && net.myChar === id);
+      const takenByOther = takenBy && takenBy.pid !== net.myId;
+      ctx.fillStyle = PAL.dark;
+      ctx.fillRect(c.x, c.y, c.w, c.h);
+      ctx.strokeStyle = isMine ? PAL.green : (takenByOther ? PAL.wall : (!IS_TOUCH && i === net.selIdx ? PAL.yellow : PAL.blue));
+      ctx.lineWidth = 2;
+      ctx.strokeRect(c.x+1, c.y+1, c.w-2, c.h-2);
+      if (takenByOther) ctx.globalAlpha = 0.4;
+      drawSprite(SPR[f.sprite], c.x + c.w/2, c.y + 16);
+      text(f.name, c.x + c.w/2, c.y + 28, PAL.white, 1, 'center');
+      text(f.flavour, c.x + c.w/2, c.y + 40, PAL.grey, 1, 'center');
+      if (takenByOther) { text('TAKEN', c.x + c.w/2, c.y + 51, PAL.red, 1, 'center'); ctx.globalAlpha = 1; }
+      if (isMine) text('YOU', c.x + c.w/2, c.y + 51, PAL.green, 1, 'center');
+    }
+    if (isLobby) {
+      const ready = net.lobby.filter(l => l.char).length;
+      text(ready + '/' + net.lobby.length + ' picked', VW/2, 222, PAL.grey, 1, 'center');
+      if (net.mode === 'host') {
+        drawButton(lobbyStartButton(), net.myChar);
+        if (!IS_TOUCH) text('[G] start when ready', VW/2 + 130, 242, PAL.grey, 1, 'left');
+      } else {
+        text('waiting for host to start...', VW/2, 240, PAL.grey, 1, 'center');
+      }
+    } else if (!IS_TOUCH) {
+      text('arrows + ENTER to pick', VW/2, 236, PAL.grey, 1, 'center');
+    }
+    if (net.err) text(net.err, VW/2, 258, PAL.red, 1, 'center');
+    return;
+  }
+
+  // in-game states
+  if (net.mode === 'client') {
+    const sn = lerpSnap();
+    if (sn) renderWorldFromSnap(sn);
+  } else if (game) {
+    renderWorldFromGame(game);
+  }
+
+  // virtual joystick
+  if (touch.active && state === S.PLAYING) {
+    ctx.globalAlpha = 0.25;
+    ctx.strokeStyle = PAL.white;
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(touch.ox, touch.oy, 26, 0, Math.PI*2); ctx.stroke();
+    ctx.globalAlpha = 0.45;
+    ctx.fillStyle = PAL.white;
+    ctx.beginPath(); ctx.arc(touch.ox + touch.dirX * 26, touch.oy + touch.dirY * 26, 7, 0, Math.PI*2); ctx.fill();
+    ctx.globalAlpha = 1;
+  }
+
+  drawHUD();
+
+  if (state === S.ROUNDINTRO) {
+    const rd = net.mode === 'client' ? (net.snapCur ? net.snapCur.round : 1) : (game ? game.round : 1);
+    ctx.fillStyle = 'rgba(11,14,22,0.55)';
+    ctx.fillRect(0, VH/2 - 26, VW, 52);
+    const label = rd === MAX_ROUND ? 'FINAL ROUND — BOSS' : 'ROUND ' + rd;
+    text(label, VW/2, VH/2 - 12, rd === MAX_ROUND ? PAL.purple : PAL.yellow, 2, 'center');
+  }
+
+  if (state === S.UPGRADE) {
+    ctx.fillStyle = 'rgba(11,14,22,0.85)';
+    ctx.fillRect(0, 0, VW, VH);
+    const cards = net.myUpgrades || (game && game.upgradeChoices[net.myId]) || [];
+    text('ROUND CLEAR', VW/2, 30, PAL.green, 2, 'center');
+    if (net.picked) {
+      text('waiting for the rest of the family...', VW/2, 54, PAL.grey, 1, 'center');
+    } else {
+      text(IS_TOUCH ? 'tap a card to choose' : 'choose — press 1, 2 or 3', VW/2, 54, PAL.grey, 1, 'center');
+    }
+    for (let i = 0; i < cards.length; i++) {
+      const u = cards[i];
+      const rct = cardRect(i);
+      ctx.globalAlpha = net.picked ? 0.4 : 1;
+      ctx.fillStyle = PAL.dark;
+      ctx.fillRect(rct.x, rct.y, rct.w, rct.h);
+      ctx.strokeStyle = u.family ? FAMILY[u.family].col : PAL.blue;
+      ctx.lineWidth = 2;
+      ctx.strokeRect(rct.x+1, rct.y+1, rct.w-2, rct.h-2);
+      text('[' + (i+1) + ']', rct.x + rct.w/2, rct.y + 10, PAL.yellow, 1.5, 'center');
+      if (u.family) {
+        drawSprite(SPR[FAMILY[u.family].sprite], rct.x + rct.w/2, rct.y + 44);
+        text(u.name, rct.x + rct.w/2, rct.y + 62, PAL.white, 1, 'center');
+        text(u.desc, rct.x + rct.w/2, rct.y + 82, PAL.grey, 1, 'center');
+      } else {
+        text(u.name, rct.x + rct.w/2, rct.y + 44, PAL.white, 1, 'center');
+        text(u.desc, rct.x + rct.w/2, rct.y + 66, PAL.grey, 1, 'center');
+      }
+      ctx.globalAlpha = 1;
+    }
+  }
+
+  if (state === S.GAMEOVER || state === S.VICTORY) {
+    const info = net.overInfo || { score: 0, kills: 0, round: 1, team: [], allies: [] };
+    ctx.fillStyle = 'rgba(11,14,22,0.85)';
+    ctx.fillRect(0, 0, VW, VH);
+    if (state === S.VICTORY) {
+      text('VICTORY!', VW/2, 60, PAL.yellow, 3, 'center');
+      text('the family cleared the swarm together!', VW/2, 92, PAL.grey, 1, 'center');
+    } else {
+      text('GAME OVER', VW/2, 60, PAL.red, 3, 'center');
+      text('the swarm got the whole family — round ' + info.round, VW/2, 92, PAL.grey, 1, 'center');
+    }
+    const team = info.team.concat(info.allies || []);
+    const startX = VW/2 - (team.length-1) * 12;
+    for (let i = 0; i < team.length; i++) {
+      drawSprite(SPR[FAMILY[team[i]].sprite], startX + i * 24, 120);
+    }
+    text('score ' + info.score + '   kills ' + info.kills, VW/2, 142, PAL.white, 1, 'center');
+    if (info.score >= highScore && info.score > 0) text('HIGH SCORE!', VW/2, 156, PAL.yellow, 1, 'center');
+    text(IS_TOUCH ? 'TAP TO CONTINUE' : 'PRESS ENTER', VW/2, 180, PAL.green, 1.5, 'center');
+  }
+}
+
+// ---------- Main loop ----------
+let last = performance.now();
+function loop(now) {
+  let dt = (now - last) / 1000;
+  last = now;
+  dt = Math.min(dt, 1/30);
+  try { update(dt); render(); } catch (e) { console.error(e); }
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>
