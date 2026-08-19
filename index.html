@@ -319,7 +319,8 @@ const net = {
   lastInputSent: 0,
   snapPrev: null, snapCur: null, snapAt: 0, snapGap: 0.05,
   myUpgrades: null, picked: false,
-  overInfo: null
+  overInfo: null,
+  infinite: false
 };
 
 let game = null;       // authoritative sim (solo + host only)
@@ -353,6 +354,7 @@ function newGame(playerDefs) {
   return {
     mp: playerDefs.length > 1,
     round: 1, score: 0, kills: 0,
+    infinite: false,
     roundTime: 0, roundLen: 35,
     spawnTimer: 0, introTimer: 0, shake: 0,
     nextEid: 1,
@@ -617,14 +619,14 @@ function startRound(g) {
     if (p.down) { p.down = false; p.hp = Math.max(1, Math.ceil(p.maxHp / 2)); p.invuln = 1.5; }
   }
   state = S.ROUNDINTRO;
-  if (g.round === MAX_ROUND) spawnBoss(g);
+  if (!g.infinite && g.round === MAX_ROUND) spawnBoss(g);
   if (net.mode === 'host') hostBroadcast({ t: 'round', n: g.round });
 }
 
 function endRound(g) {
   g.score += 100 + g.round * 25;
   g.ebullets = [];
-  if (g.round >= MAX_ROUND) {
+  if (!g.infinite && g.round >= MAX_ROUND) {
     finishGame(g, true);
     return;
   }
@@ -753,7 +755,7 @@ function simStep(g, dt) {
 
   // spawn
   g.roundTime += dt;
-  if (g.round < MAX_ROUND) {
+  if (g.infinite || g.round < MAX_ROUND) {
     g.spawnTimer -= dt;
     if (g.spawnTimer <= 0) {
       const crew = g.players.length + g.allies.length;
@@ -1009,6 +1011,7 @@ function hostStartGame() {
   const defs = net.lobby.filter(l => l.char).map(l => ({ pid: l.pid, char: l.char }));
   if (!defs.some(d => d.pid === 0)) return; // host must pick
   game = newGame(defs);
+  game.infinite = net.infinite && false; // infinite is solo-only for now
   hostBroadcast({ t: 'start', players: defs });
   startRound(game);
 }
@@ -1075,7 +1078,7 @@ function resetToTitle() {
   net.mode = 'solo'; net.peer = null; net.conns = []; net.hostConn = null;
   net.code = ''; net.myId = 0; net.nextPid = 1; net.lobby = [];
   net.myChar = null; net.selIdx = 0; net.snapPrev = null; net.snapCur = null;
-  net.myUpgrades = null; net.picked = false; net.overInfo = null;
+  net.myUpgrades = null; net.picked = false; net.overInfo = null; net.infinite = false;
   game = null;
   state = S.TITLE;
 }
@@ -1083,8 +1086,9 @@ function resetToTitle() {
 // ---------- Menus: layout + hit testing ----------
 function titleButtons() {
   return [
-    { label: 'SOLO', x: VW/2 - 130, y: 185, w: 120, h: 26 },
-    { label: 'MULTIPLAYER', x: VW/2 + 10, y: 185, w: 120, h: 26 }
+    { label: 'SOLO', x: VW/2 - 130, y: 182, w: 120, h: 26 },
+    { label: 'MULTIPLAYER', x: VW/2 + 10, y: 182, w: 120, h: 26 },
+    { label: 'INFINITE', x: VW/2 - 70, y: 212, w: 140, h: 26 }
   ];
 }
 function mpButtons() {
@@ -1121,6 +1125,7 @@ function chooseChar(id) {
     net.myChar = id;
     game = newGame([{ pid: 0, char: id }]);
     net.myId = 0;
+    game.infinite = net.infinite;
     startRound(game);
   } else if (state === S.LOBBY) {
     const taken = net.lobby.some(l => l.char === id && l.pid !== net.myId);
@@ -1151,12 +1156,13 @@ function pickUpgrade(idx) {
 function handleTap(x, y) {
   if (state === S.TITLE) {
     const b = titleButtons();
-    if (inRect(x, y, b[0])) { state = S.CHARSELECT; net.selIdx = 0; }
-    else if (inRect(x, y, b[1])) { state = S.MPMENU; net.err = ''; }
+    if (inRect(x, y, b[0])) { net.infinite = false; state = S.CHARSELECT; net.selIdx = 0; }
+    else if (inRect(x, y, b[1])) { net.infinite = false; state = S.MPMENU; net.err = ''; }
+    else if (inRect(x, y, b[2])) { net.infinite = true; state = S.CHARSELECT; net.selIdx = 0; }
   } else if (state === S.MPMENU) {
     const b = mpButtons();
-    if (inRect(x, y, b[0])) startHost();
-    else if (inRect(x, y, b[1])) startJoin();
+    if (inRect(x, y, b[0])) { net.infinite = false; startHost(); }
+    else if (inRect(x, y, b[1])) { net.infinite = false; startJoin(); }
     else if (inRect(x, y, b[2])) resetToTitle();
   } else if (state === S.CHARSELECT || state === S.LOBBY) {
     for (const c of charCells()) {
@@ -1174,8 +1180,9 @@ function handleTap(x, y) {
 
 function handleMenuKey(code) {
   if (state === S.TITLE) {
-    if (code === 'Digit1' || code === 'Enter' || code === 'Space') { state = S.CHARSELECT; net.selIdx = 0; }
-    else if (code === 'Digit2' || code === 'KeyM') { state = S.MPMENU; net.err = ''; }
+    if (code === 'Digit1' || code === 'Enter' || code === 'Space') { net.infinite = false; state = S.CHARSELECT; net.selIdx = 0; }
+    else if (code === 'Digit2' || code === 'KeyM') { net.infinite = false; state = S.MPMENU; net.err = ''; }
+    else if (code === 'Digit3' || code === 'KeyI') { net.infinite = true; state = S.CHARSELECT; net.selIdx = 0; }
   } else if (state === S.MPMENU) {
     if (code === 'Digit1' || code === 'KeyH') startHost();
     else if (code === 'Digit2' || code === 'KeyJ') startJoin();
@@ -1420,7 +1427,7 @@ function myHud() {
   return {
     hp: me.hp, mhp: me.maxHp,
     round: game.round,
-    left: game.round < MAX_ROUND ? Math.max(0, Math.ceil(game.roundLen - game.roundTime)) : -1,
+    left: (!game.infinite && game.round >= MAX_ROUND) ? -1 : Math.max(0, Math.ceil(game.roundLen - game.roundTime)),
     score: game.score,
     boss: game.boss && !game.boss.dead ? { hp: game.boss.hp, mhp: game.boss.maxHp } : null
   };
@@ -1432,7 +1439,8 @@ function drawHUD() {
   heartRow(h.hp, h.mhp, 6, 6);
   text('SCORE ' + h.score, VW - 6, 5, PAL.white, 1, 'right');
   if (h.left >= 0) {
-    text('ROUND ' + h.round + '  ' + h.left + 's', VW/2, 5, PAL.grey, 1, 'center');
+    const inf = (game && game.infinite) ? ' ∞' : '';
+    text('ROUND ' + h.round + inf + '  ' + h.left + 's', VW/2, 5, PAL.grey, 1, 'center');
   } else {
     text('ROUND ' + h.round + '  BOSS', VW/2, 5, PAL.purple, 1, 'center');
     if (h.boss) {
@@ -1456,11 +1464,11 @@ function render() {
     }
     text(IS_TOUCH ? 'drag to move — guns fire themselves' : 'WASD / arrows to move — guns fire themselves', VW/2, 125, PAL.white, 1, 'center');
     text('team up online: host a room, share the 4-letter code', VW/2, 137, PAL.white, 1, 'center');
+    if (highScore > 0) text('HIGH SCORE ' + highScore, VW/2, 160, PAL.cyan, 1, 'center');
     const bts = titleButtons();
-    drawButton(bts[0]); drawButton(bts[1]);
-    if (!IS_TOUCH) text('[1] solo   [2] multiplayer', VW/2, 220, PAL.grey, 1, 'center');
-    if (highScore > 0) text('HIGH SCORE ' + highScore, VW/2, 240, PAL.cyan, 1, 'center');
-    if (net.err) text(net.err, VW/2, 253, PAL.red, 1, 'center');
+    drawButton(bts[0]); drawButton(bts[1]); drawButton(bts[2], net.infinite);
+    if (!IS_TOUCH) text('[1] solo   [2] multiplayer   [3] infinite', VW/2, 246, PAL.grey, 1, 'center');
+    if (net.err) text(net.err, VW/2, 260, PAL.red, 1, 'center');
     return;
   }
 
@@ -1546,8 +1554,9 @@ function render() {
     const rd = net.mode === 'client' ? (net.snapCur ? net.snapCur.round : 1) : (game ? game.round : 1);
     ctx.fillStyle = 'rgba(11,14,22,0.55)';
     ctx.fillRect(0, VH/2 - 26, VW, 52);
-    const label = rd === MAX_ROUND ? 'FINAL ROUND — BOSS' : 'ROUND ' + rd;
-    text(label, VW/2, VH/2 - 12, rd === MAX_ROUND ? PAL.purple : PAL.yellow, 2, 'center');
+    const finalRound = rd === MAX_ROUND && !net.infinite;
+    const label = finalRound ? 'FINAL ROUND — BOSS' : 'ROUND ' + rd;
+    text(label, VW/2, VH/2 - 12, finalRound ? PAL.purple : PAL.yellow, 2, 'center');
   }
 
   if (state === S.UPGRADE) {
