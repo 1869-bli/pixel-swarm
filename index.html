@@ -22,6 +22,10 @@
 </head>
 <body>
 <canvas id="game"></canvas>
+<audio id="bgm" loop preload="auto">
+  <source src="PixelSwarmMainMenu.m4a" type="audio/mp4">
+  <source src="PixelSwarmMainMenu.caf" type="audio/x-caf">
+</audio>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/peerjs/1.5.4/peerjs.min.js"></script>
 <script>
 (() => {
@@ -159,6 +163,23 @@ function audio() {
   if (AC && AC.state === 'suspended') AC.resume();
   return AC;
 }
+
+// ---------- Background music ----------
+const bgm = document.getElementById('bgm');
+let bgmStarted = false, bgmOn = true;
+function ensureBgm() {
+  if (bgmStarted) return;
+  bgm.volume = 0.5;
+  bgm.muted = !bgmOn;
+  const p = bgm.play();
+  if (p && p.then) p.then(() => { bgmStarted = true; }).catch(() => {});
+  else bgmStarted = true;
+}
+function toggleBgm() {
+  bgmOn = !bgmOn;
+  bgm.muted = !bgmOn;
+  if (bgmOn && !bgmStarted) ensureBgm();
+}
 function tone(freq, dur, type, vol, slideTo, delay) {
   type = type || 'square'; vol = vol === undefined ? 0.12 : vol; delay = delay || 0;
   const a = audio(); if (!a) return;
@@ -217,6 +238,7 @@ window.addEventListener('keydown', e => {
   keys[e.code] = true;
   if (['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Space'].includes(e.code)) e.preventDefault();
   audio();
+  ensureBgm();
   handleMenuKey(e.code);
 });
 window.addEventListener('keyup', e => { keys[e.code] = false; });
@@ -232,6 +254,7 @@ function toCanvas(clientX, clientY) {
 canvas.addEventListener('touchstart', e => {
   e.preventDefault();
   audio();
+  ensureBgm();
   const t = e.changedTouches[0];
   const c = toCanvas(t.clientX, t.clientY);
   if (state === S.PLAYING || state === S.ROUNDINTRO) {
@@ -275,6 +298,7 @@ canvas.addEventListener('touchcancel', endTouch, { passive: false });
 // Mouse clicks work as taps in menus too (handy on desktop)
 canvas.addEventListener('mousedown', e => {
   audio();
+  ensureBgm();
   if (state === S.PLAYING || state === S.ROUNDINTRO) return;
   const c = toCanvas(e.clientX, e.clientY);
   handleTap(c.x, c.y);
@@ -1179,6 +1203,7 @@ function handleTap(x, y) {
 }
 
 function handleMenuKey(code) {
+  if (code === 'KeyN') { toggleBgm(); return; }
   if (state === S.TITLE) {
     if (code === 'Digit1' || code === 'Enter' || code === 'Space') { net.infinite = false; state = S.CHARSELECT; net.selIdx = 0; }
     else if (code === 'Digit2' || code === 'KeyM') { net.infinite = false; state = S.MPMENU; net.err = ''; }
@@ -1467,7 +1492,7 @@ function render() {
     if (highScore > 0) text('HIGH SCORE ' + highScore, VW/2, 160, PAL.cyan, 1, 'center');
     const bts = titleButtons();
     drawButton(bts[0]); drawButton(bts[1]); drawButton(bts[2], net.infinite);
-    if (!IS_TOUCH) text('[1] solo   [2] multiplayer   [3] infinite', VW/2, 246, PAL.grey, 1, 'center');
+    if (!IS_TOUCH) text('[1] solo   [2] multiplayer   [3] infinite   [N] ' + (bgmOn ? 'mute' : 'unmute'), VW/2, 246, PAL.grey, 1, 'center');
     if (net.err) text(net.err, VW/2, 260, PAL.red, 1, 'center');
     return;
   }
